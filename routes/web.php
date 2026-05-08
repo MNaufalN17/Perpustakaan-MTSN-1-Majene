@@ -2,30 +2,42 @@
 
 use App\Http\Controllers\ProfileController;
 use Illuminate\Support\Facades\Route;
+use App\Http\Controllers\MemberController;
+use App\Http\Controllers\BookController;
+use App\Http\Controllers\BookItemController;
+use App\Http\Controllers\LoanController;
+use App\Http\Controllers\ReportController;
 
+// 1. Saat web dibuka pertama kali, langsung arahkan ke halaman login
 Route::get('/', function () {
-    return view('pustakawan.dashboard'); // Arahkan ke dashboard pustakawan sebagai halaman utama
+    return redirect('/login');
 });
 
-Route::get('/dashboard', function () {
-    return view('dashboard');
-})->middleware(['auth', 'verified'])->name('dashboard');
-
+// 2. Grup rute yang HANYA bisa diakses setelah pengguna berhasil login
 Route::middleware('auth')->group(function () {
+    
+    // --- RUTE DASHBOARD KEPALA SEKOLAH ---
+    Route::get('/kepala-sekolah/dashboard', [ReportController::class, 'dashboard'])
+        ->name('kepsek.dashboard');
+
+    // --- RUTE DASHBOARD PUSTAKAWAN ---
+    Route::get('/pustakawan/dashboard', function () {
+        return view('pustakawan.dashboard');
+    })->name('pustakawan.dashboard');
+
+    // --- RUTE RESOURCE (CRUD) UNTUK PUSTAKAWAN ---
+    // Route::resource otomatis membuatkan rute untuk index, create, store, show, edit, update, dan destroy
+    Route::resource('members', MemberController::class);
+    Route::resource('books', BookController::class);
+    Route::resource('book_items', BookItemController::class);
+    Route::resource('loans', LoanController::class);
+    
+    // --- RUTE PROFIL BAWAAN BREEZE ---
+    // Biarkan kode ini agar fitur ganti password dan profil dari Breeze tidak error
     Route::get('/profile', [ProfileController::class, 'edit'])->name('profile.edit');
     Route::patch('/profile', [ProfileController::class, 'update'])->name('profile.update');
     Route::delete('/profile', [ProfileController::class, 'destroy'])->name('profile.destroy');
-
-
-    // Rute Dashboard Pustakawan yang diarahkan ke file view blade
-    Route::get('/pustakawan/dashboard', function () {
-        return view('pustakawan.dashboard'); 
-    })->name('pustakawan.dashboard');
-
-    // Placeholder untuk Dashboard Kepala Sekolah (Tetap teks dulu sementara)
-    Route::get('/kepala-sekolah/dashboard', function () {
-        return 'Selamat datang di Dashboard Kepala Sekolah (Sekarang menggunakan Breeze)!';
-    })->name('kepsek.dashboard');
 });
 
+// 3. Memuat rute autentikasi (Login/Logout) yang disediakan oleh Laravel Breeze
 require __DIR__.'/auth.php';
