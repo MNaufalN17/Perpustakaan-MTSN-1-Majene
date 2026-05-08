@@ -215,7 +215,7 @@
     </div>
 
     <div class="bg-surface-container-low p-4 text-center border-t border-outline-variant">
-        <p class="font-body-sm text-body-sm text-on-surface-variant">© 2024 MTsN 1 Majene. Hak Cipta Dilindungi.</p>
+        <p class="font-body-sm text-body-sm text-on-surface-variant">© 2026 MTsN 1 Majene. Hak Cipta Dilindungi.</p>
     </div>
 </main>
 </body>
