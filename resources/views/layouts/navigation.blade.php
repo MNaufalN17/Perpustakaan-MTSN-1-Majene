@@ -12,6 +12,21 @@
                     <x-nav-link :href="Auth::user()->role_id == 1 ? route('pustakawan.dashboard') : route('kepsek.dashboard')" :active="request()->routeIs('*dashboard')">
                         {{ __('Dashboard') }}
                     </x-nav-link>
+
+                    @if(Auth::user()->role_id == 1)
+                        <x-nav-link :href="route('members.index')" :active="request()->routeIs('members.*')">
+                            {{ __('Anggota') }}
+                        </x-nav-link>
+                        <x-nav-link :href="route('books.index')" :active="request()->routeIs('books.*')">
+                            {{ __('Katalog Buku') }}
+                        </x-nav-link>
+                        <x-nav-link :href="route('book_items.index')" :active="request()->routeIs('book_items.*')">
+                            {{ __('Fisik Buku') }}
+                        </x-nav-link>
+                        <x-nav-link :href="route('loans.index')" :active="request()->routeIs('loans.*')">
+                            {{ __('Sirkulasi / Transaksi') }}
+                        </x-nav-link>
+                    @endif
                 </div>
             </div>
 
@@ -63,6 +78,21 @@
             <x-responsive-nav-link :href="Auth::user()->role_id == 1 ? route('pustakawan.dashboard') : route('kepsek.dashboard')" :active="request()->routeIs('*dashboard')">
                 {{ __('Dashboard') }}
             </x-responsive-nav-link>
+
+            @if(Auth::user()->role_id == 1)
+                <x-responsive-nav-link :href="route('members.index')" :active="request()->routeIs('members.*')">
+                    {{ __('Anggota') }}
+                </x-responsive-nav-link>
+                <x-responsive-nav-link :href="route('books.index')" :active="request()->routeIs('books.*')">
+                    {{ __('Katalog Buku') }}
+                </x-responsive-nav-link>
+                <x-responsive-nav-link :href="route('book_items.index')" :active="request()->routeIs('book_items.*')">
+                    {{ __('Fisik Buku') }}
+                </x-responsive-nav-link>
+                <x-responsive-nav-link :href="route('loans.index')" :active="request()->routeIs('loans.*')">
+                    {{ __('Sirkulasi / Transaksi') }}
+                </x-responsive-nav-link>
+            @endif
         </div>
 
         <div class="pt-4 pb-1 border-t border-gray-200">
