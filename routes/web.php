@@ -8,8 +8,14 @@ use App\Http\Controllers\BookItemController;
 use App\Http\Controllers\LoanController;
 use App\Http\Controllers\ReportController;
 
-// 1. Saat web dibuka pertama kali, langsung arahkan ke halaman login
+// 1. Saat web dibuka pertama kali, arahkan menurut status login
 Route::get('/', function () {
+    if (auth()->check()) {
+        return auth()->user()->role_id === 2
+            ? redirect()->route('kepsek.dashboard')
+            : redirect()->route('pustakawan.dashboard');
+    }
+
     return redirect('/login');
 });
 
