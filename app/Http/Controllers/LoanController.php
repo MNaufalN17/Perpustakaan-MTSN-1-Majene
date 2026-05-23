@@ -3,7 +3,6 @@
 namespace App\Http\Controllers;
 
 use App\Models\BookItem;
-use App\Models\FinePayment;
 use App\Models\Loan;
 use App\Models\LoanItem;
 use App\Models\Member;
@@ -12,37 +11,31 @@ use Carbon\Carbon;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Validation\ValidationException;
 
 class LoanController extends Controller
 {
-    /**
-     * Menampilkan daftar transaksi peminjaman.
-     */
     public function index()
-    {
-        $loans = Loan::with(['member.studentClass', 'handler', 'loanItems.bookItem.book'])
-            ->latest()
-            ->get();
+{
+    $loans = Loan::with(['member', 'handler', 'loanItems.bookItem.book'])
+        ->latest()
+        ->get();
 
-        return view('pustakawan.loans.index', compact('loans'));
-    }
+    return view('pustakawan.loans.index', compact('loans'));
+}
 
-    /**
-     * Menampilkan form peminjaman baru.
-     */
     public function create()
     {
+        $this->syncOverdueLoans();
+
         $members = Member::with('studentClass')
             ->where('status', 'aktif')
             ->orderBy('name')
             ->get();
 
-        $bookItems = BookItem::with('book')
+        $bookItems = BookItem::with(['book', 'activeLoanItems'])
             ->where('status', 'tersedia')
-            ->where('condition', 'baik')
-            ->whereHas('book', function ($query) {
-                $query->where('is_borrowable', true);
-            })
+            ->whereDoesntHave('activeLoanItems')
             ->orderBy('item_code')
             ->get();
 
@@ -51,272 +44,265 @@ class LoanController extends Controller
         return view('pustakawan.loans.create', compact('members', 'bookItems', 'classes'));
     }
 
-    /**
-     * Menyimpan transaksi peminjaman baru.
-     */
     public function store(Request $request)
     {
-        $request->validate([
-            'member_id' => 'required|exists:members,id',
-            'book_item_ids' => 'required|array',
-            'book_item_ids.*' => 'nullable|exists:book_items,id',
+        $validated = $request->validate([
+            'member_id' => ['required', 'exists:members,id'],
+            'book_item_ids' => ['required', 'array', 'min:1', 'max:3'],
+            'book_item_ids.*' => ['nullable', 'exists:book_items,id'],
+            'loan_date' => ['required', 'date'],
+            'due_date' => ['required', 'date', 'after_or_equal:loan_date'],
+        ], [
+            'member_id.required' => 'Anggota peminjam wajib dipilih.',
+            'member_id.exists' => 'Anggota peminjam tidak ditemukan.',
+            'book_item_ids.required' => 'Minimal satu buku wajib dipilih.',
+            'book_item_ids.min' => 'Minimal satu buku wajib dipilih.',
+            'book_item_ids.max' => 'Maksimal tiga buku dalam satu transaksi.',
+            'book_item_ids.*.exists' => 'Salah satu buku yang dipilih tidak ditemukan.',
+            'loan_date.required' => 'Tanggal pinjam wajib diisi.',
+            'due_date.required' => 'Tanggal jatuh tempo wajib diisi.',
+            'due_date.after_or_equal' => 'Tanggal jatuh tempo tidak boleh lebih awal dari tanggal pinjam.',
         ]);
 
-        $bookItemIds = collect($request->book_item_ids)
+        $bookItemIds = collect($validated['book_item_ids'])
             ->filter()
+            ->unique()
             ->values();
 
-        if ($bookItemIds->count() < 1) {
-            return back()
-                ->withInput()
-                ->withErrors(['book_item_ids' => 'Minimal pilih 1 buku untuk dipinjam.']);
+        if ($bookItemIds->isEmpty()) {
+            throw ValidationException::withMessages([
+                'book_item_ids' => 'Minimal satu buku wajib dipilih.',
+            ]);
         }
 
-        if ($bookItemIds->count() > 3) {
-            return back()
-                ->withInput()
-                ->withErrors(['book_item_ids' => 'Maksimal peminjaman adalah 3 buku.']);
+        if ($bookItemIds->count() !== collect($validated['book_item_ids'])->filter()->count()) {
+            throw ValidationException::withMessages([
+                'book_item_ids' => 'Buku yang sama tidak boleh dipilih lebih dari satu kali.',
+            ]);
         }
 
-        if ($bookItemIds->count() !== $bookItemIds->unique()->count()) {
-            return back()
-                ->withInput()
-                ->withErrors(['book_item_ids' => 'Buku yang sama tidak boleh dipilih lebih dari satu kali.']);
-        }
+        $loan = DB::transaction(function () use ($validated, $bookItemIds) {
+            $bookItems = BookItem::with(['book', 'activeLoanItems'])
+                ->whereIn('id', $bookItemIds)
+                ->lockForUpdate()
+                ->get();
 
-        $member = Member::findOrFail($request->member_id);
-
-        if ($member->status !== 'aktif') {
-            return back()
-                ->withInput()
-                ->withErrors(['member_id' => 'Anggota nonaktif tidak boleh meminjam buku.']);
-        }
-
-        $hasActiveLoan = Loan::where('member_id', $member->id)
-            ->whereIn('status', ['aktif', 'terlambat'])
-            ->exists();
-
-        if ($hasActiveLoan) {
-            return back()
-                ->withInput()
-                ->withErrors(['member_id' => 'Anggota masih memiliki pinjaman aktif. Harap kembalikan buku terlebih dahulu sebelum meminjam lagi.']);
-        }
-
-        $bookItems = BookItem::with('book')
-            ->whereIn('id', $bookItemIds)
-            ->get();
-
-        foreach ($bookItems as $bookItem) {
-            if ($bookItem->status !== 'tersedia') {
-                return back()
-                    ->withInput()
-                    ->withErrors(['book_item_ids' => "Buku {$bookItem->item_code} tidak tersedia untuk dipinjam."]);
-            }
-
-            if ($bookItem->condition !== 'baik') {
-                return back()
-                    ->withInput()
-                    ->withErrors(['book_item_ids' => "Buku {$bookItem->item_code} tidak dalam kondisi baik."]);
-            }
-
-            if (!$bookItem->book || !$bookItem->book->is_borrowable) {
-                return back()
-                    ->withInput()
-                    ->withErrors(['book_item_ids' => "Buku {$bookItem->item_code} hanya boleh dibaca di tempat dan tidak bisa dipinjam."]);
-            }
-        }
-
-        try {
-            DB::transaction(function () use ($member, $bookItems) {
-                $loan = Loan::create([
-                    'loan_code' => 'TRX-' . now()->format('Ymd-His') . '-' . random_int(1000, 9999),
-                    'member_id' => $member->id,
-                    'loan_date' => today()->toDateString(),
-                    'due_date' => today()->addDays(3)->toDateString(),
-                    'status' => 'aktif',
-                    'handled_by' => Auth::id(),
-                ]);
-
-                foreach ($bookItems as $bookItem) {
-                    LoanItem::create([
-                        'loan_id' => $loan->id,
-                        'book_item_id' => $bookItem->id,
-                        'renewal_count' => 0,
-                        'late_days' => 0,
-                        'fine_amount' => 0,
-                        'status' => 'dipinjam',
-                    ]);
-
-                    $bookItem->update([
-                        'status' => 'dipinjam',
+            foreach ($bookItems as $bookItem) {
+                if ($bookItem->activeLoanItems->isNotEmpty()) {
+                    throw ValidationException::withMessages([
+                        'book_item_ids' => 'Eksemplar "' . $bookItem->item_code . '" masih tercatat sedang dipinjam.',
                     ]);
                 }
-            });
 
-            return redirect()
-                ->route('loans.index')
-                ->with('success', 'Transaksi peminjaman berhasil disimpan.');
+                if ($bookItem->status !== 'tersedia') {
+                    throw ValidationException::withMessages([
+                        'book_item_ids' => 'Eksemplar "' . $bookItem->item_code . '" tidak tersedia untuk dipinjam.',
+                    ]);
+                }
+            }
 
-        } catch (\Exception $e) {
-            return back()
-                ->withInput()
-                ->withErrors(['error' => 'Gagal menyimpan transaksi peminjaman: ' . $e->getMessage()]);
-        }
+            $loan = Loan::create([
+                'loan_code' => $this->generateLoanCode(),
+                'member_id' => $validated['member_id'],
+                'loan_date' => $validated['loan_date'],
+                'due_date' => $validated['due_date'],
+                'status' => 'aktif',
+                'handled_by' => Auth::id(),
+            ]);
+
+            foreach ($bookItems as $bookItem) {
+                LoanItem::create([
+                    'loan_id' => $loan->id,
+                    'book_item_id' => $bookItem->id,
+                    'status' => 'dipinjam',
+                    'late_days' => 0,
+                    'fine_amount' => 0,
+                ]);
+
+                $bookItem->update([
+                    'status' => 'dipinjam',
+                ]);
+            }
+
+            return $loan;
+        });
+
+        return redirect()
+            ->route('loans.show', $loan)
+            ->with('success_title', 'Peminjaman berhasil dibuat')
+            ->with('success_message', 'Transaksi "' . $loan->loan_code . '" berhasil disimpan.')
+            ->with('success_detail', 'Status stok buku otomatis berubah menjadi dipinjam.');
     }
 
-    /**
-     * Menampilkan detail transaksi peminjaman.
-     */
     public function show(Loan $loan)
-    {
-        $loan->load(['member.studentClass', 'handler', 'loanItems.bookItem.book', 'loanItems.finePayment']);
+{
+    $loan->load([
+        'member.studentClass',
+        'handler',
+        'loanItems.bookItem.book',
+    ]);
 
-        return view('pustakawan.loans.show', compact('loan'));
-    }
+    return view('pustakawan.loans.show', compact('loan'));
+}
 
-    /**
-     * Menampilkan form pengembalian buku.
-     */
     public function edit(Loan $loan)
     {
-        $loan->load(['member.studentClass', 'loanItems.bookItem.book']);
+        $this->syncOverdueLoans();
 
-        return view('pustakawan.loans.edit', compact('loan'));
+        $loan->load(['member.studentClass', 'loanItems.bookItem.book', 'handler']);
+
+        $activeItems = $loan->loanItems
+            ->whereIn('status', ['dipinjam', 'terlambat'])
+            ->values();
+
+        return view('pustakawan.loans.edit', compact('loan', 'activeItems'));
     }
 
-    /**
-     * Memproses pengembalian buku.
-     */
     public function update(Request $request, Loan $loan)
     {
-        $request->validate([
-            'items' => 'required|array',
-            'items.*.return_condition' => 'required|in:baik,rusak ringan,rusak berat,hilang',
+        $this->syncOverdueLoans();
+
+        $loan->load(['loanItems.bookItem.book']);
+
+        $activeItems = $loan->loanItems
+            ->whereIn('status', ['dipinjam', 'terlambat'])
+            ->values();
+
+        if ($activeItems->isEmpty()) {
+            return redirect()
+                ->route('loans.show', $loan)
+                ->with('error_title', 'Pengembalian tidak bisa diproses')
+                ->with('error_message', 'Transaksi ini sudah tidak memiliki buku yang sedang dipinjam.')
+                ->with('error_detail', 'Kemungkinan semua buku pada transaksi ini sudah pernah dikembalikan.');
+        }
+
+        $validated = $request->validate([
+            'items' => ['required', 'array'],
+            'items.*.return_condition' => ['required', 'in:baik,rusak ringan,rusak berat,hilang'],
+        ], [
+            'items.required' => 'Kondisi buku yang dikembalikan wajib diisi.',
+            'items.*.return_condition.required' => 'Kondisi setiap buku wajib dipilih.',
+            'items.*.return_condition.in' => 'Kondisi buku yang dipilih tidak valid.',
         ]);
 
-        $today = Carbon::today();
+        $today = Carbon::now()->startOfDay();
         $dueDate = Carbon::parse($loan->due_date)->startOfDay();
-        $finePerDay = 500;
+        $lateDays = $today->gt($dueDate) ? (int) $dueDate->diffInDays($today) : 0;
+        $finePerItem = $lateDays * Loan::FINE_PER_DAY;
 
-        try {
-            DB::transaction(function () use ($request, $loan, $today, $dueDate, $finePerDay) {
-                foreach ($request->items as $loanItemId => $data) {
-                    $loanItem = LoanItem::with('bookItem')
-                        ->where('loan_id', $loan->id)
-                        ->where('id', $loanItemId)
-                        ->first();
+        DB::transaction(function () use ($loan, $activeItems, $validated, $today, $lateDays, $finePerItem) {
+            foreach ($activeItems as $loanItem) {
+                $condition = $validated['items'][$loanItem->id]['return_condition'] ?? null;
 
-                    if (!$loanItem) {
-                        continue;
-                    }
-
-                    if (!in_array($loanItem->status, ['dipinjam', 'terlambat'])) {
-                        continue;
-                    }
-
-                    $returnCondition = $data['return_condition'];
-
-                    $lateDays = $today->gt($dueDate)
-                        ? $dueDate->diffInDays($today)
-                        : 0;
-
-                    $fineAmount = $lateDays * $finePerDay;
-
-                    $bookItemStatus = match ($returnCondition) {
-                        'baik' => 'tersedia',
-                        'hilang' => 'hilang',
-                        default => 'rusak',
-                    };
-
-                    $loanItemStatus = match ($returnCondition) {
-                        'hilang' => 'hilang',
-                        'rusak ringan', 'rusak berat' => 'rusak',
-                        default => $lateDays > 0 ? 'terlambat' : 'dikembalikan',
-                    };
-
-                    $loanItem->update([
-                        'return_date' => $today->toDateString(),
-                        'late_days' => $lateDays,
-                        'fine_amount' => $fineAmount,
-                        'return_condition' => $returnCondition,
-                        'status' => $loanItemStatus,
+                if (!$condition) {
+                    throw ValidationException::withMessages([
+                        "items.{$loanItem->id}.return_condition" => 'Kondisi buku "' . ($loanItem->bookItem->item_code ?? '-') . '" wajib dipilih.',
                     ]);
-
-                    $loanItem->bookItem->update([
-                        'status' => $bookItemStatus,
-                        'condition' => $returnCondition,
-                    ]);
-
-                    if ($fineAmount > 0) {
-                        FinePayment::updateOrCreate(
-                            ['loan_item_id' => $loanItem->id],
-                            [
-                                'amount' => $fineAmount,
-                                'payment_status' => 'belum dibayar',
-                                'received_by' => null,
-                                'notes' => 'Denda keterlambatan pengembalian buku.',
-                            ]
-                        );
-                    }
                 }
 
-                $hasUnreturnedItems = $loan->loanItems()
-                    ->whereIn('status', ['dipinjam', 'terlambat'])
-                    ->exists();
+                $bookItem = $loanItem->bookItem;
 
-                $loan->update([
-                    'status' => $hasUnreturnedItems ? 'aktif' : 'selesai',
+                if (!$bookItem) {
+                    throw ValidationException::withMessages([
+                        'items' => 'Salah satu data eksemplar pada transaksi ini tidak ditemukan.',
+                    ]);
+                }
+
+                $loanItem->update([
+                    'return_date' => $today->toDateString(),
+                    'late_days' => $lateDays,
+                    'fine_amount' => $finePerItem,
+                    'return_condition' => $condition,
+                    'status' => $condition === 'hilang' ? 'hilang' : 'dikembalikan',
                 ]);
-            });
 
-            return redirect()
-                ->route('loans.index')
-                ->with('success', 'Pengembalian buku berhasil diproses.');
+                $bookItem->update([
+                    'status' => $condition === 'hilang' ? 'hilang' : 'tersedia',
+                    'condition' => $condition,
+                ]);
+            }
 
-        } catch (\Exception $e) {
-            return back()
-                ->withInput()
-                ->withErrors(['error' => 'Gagal memproses pengembalian: ' . $e->getMessage()]);
-        }
+            $stillActive = $loan->loanItems()
+                ->whereIn('status', ['dipinjam', 'terlambat'])
+                ->exists();
+
+            $loan->update([
+                'status' => $stillActive ? 'aktif' : 'selesai',
+            ]);
+        });
+
+        return redirect()
+            ->route('loans.index')
+            ->with('success_title', 'Pengembalian berhasil diproses')
+            ->with('success_message', 'Buku yang dikembalikan sudah diperbarui.')
+            ->with('success_detail', 'Denda dan status stok buku sudah diperbarui otomatis.');
     }
 
-    /**
-     * Membatalkan transaksi tanpa menghapus riwayat.
-     */
     public function destroy(Loan $loan)
     {
-        if ($loan->status === 'selesai') {
-            return back()->withErrors(['error' => 'Transaksi yang sudah selesai tidak dapat dibatalkan.']);
+        $loan->load('loanItems.bookItem');
+
+        $hasActiveItems = $loan->loanItems()
+            ->whereIn('status', ['dipinjam', 'terlambat'])
+            ->exists();
+
+        if (!$hasActiveItems) {
+            return redirect()
+                ->route('loans.index')
+                ->with('error_title', 'Transaksi tidak bisa dibatalkan')
+                ->with('error_message', 'Transaksi ini sudah selesai atau tidak memiliki buku aktif.');
         }
 
-        try {
-            DB::transaction(function () use ($loan) {
-                $loan->load('loanItems.bookItem');
+        DB::transaction(function () use ($loan) {
+            foreach ($loan->loanItems as $loanItem) {
+                if (in_array($loanItem->status, ['dipinjam', 'terlambat'])) {
+                    $loanItem->update([
+                        'status' => 'batal',
+                    ]);
 
-                foreach ($loan->loanItems as $item) {
-                    if ($item->bookItem && in_array($item->status, ['dipinjam', 'terlambat'])) {
-                        $item->bookItem->update([
+                    if ($loanItem->bookItem) {
+                        $loanItem->bookItem->update([
                             'status' => 'tersedia',
-                        ]);
-
-                        $item->update([
-                            'status' => 'dikembalikan',
-                            'notes' => 'Transaksi dibatalkan oleh pustakawan.',
                         ]);
                     }
                 }
+            }
 
-                $loan->update([
-                    'status' => 'batal',
-                ]);
-            });
+            $loan->update([
+                'status' => 'batal',
+            ]);
+        });
 
-            return redirect()
-                ->route('loans.index')
-                ->with('success', 'Transaksi berhasil dibatalkan tanpa menghapus riwayat.');
+        return redirect()
+            ->route('loans.index')
+            ->with('success_title', 'Transaksi berhasil dibatalkan')
+            ->with('success_message', 'Status buku sudah dikembalikan menjadi tersedia.');
+    }
 
-        } catch (\Exception $e) {
-            return back()->withErrors(['error' => 'Gagal membatalkan transaksi: ' . $e->getMessage()]);
-        }
+    private function syncOverdueLoans(): void
+    {
+        Loan::where('status', 'aktif')
+            ->whereDate('due_date', '<', Carbon::now()->toDateString())
+            ->update([
+                'status' => 'terlambat',
+            ]);
+
+        LoanItem::where('status', 'dipinjam')
+            ->whereHas('loan', function ($query) {
+                $query->where('status', 'terlambat');
+            })
+            ->update([
+                'status' => 'terlambat',
+            ]);
+    }
+
+    private function generateLoanCode(): string
+    {
+        $date = now()->format('Ymd');
+
+        $lastNumber = Loan::whereDate('created_at', now()->toDateString())
+            ->count() + 1;
+
+        return 'TRX-' . $date . '-' . str_pad($lastNumber, 3, '0', STR_PAD_LEFT);
     }
 }

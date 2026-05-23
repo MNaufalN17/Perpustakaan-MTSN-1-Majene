@@ -8,68 +8,72 @@ use Illuminate\Validation\Rule;
 
 class DdcClassController extends Controller
 {
-    /**
-     * Menampilkan daftar semua kelas DDC.
-     */
     public function index()
     {
-        $ddcClasses = DdcClass::orderBy('code', 'asc')->get();
+        $ddcClasses = DdcClass::withCount('books')
+            ->orderBy('code')
+            ->get();
 
         return view('pustakawan.ddc.index', compact('ddcClasses'));
     }
 
-    /**
-     * Menampilkan form edit DDC.
-     */
-    public function edit($id)
+    public function edit(DdcClass $ddc)
     {
-        $ddcClass = DdcClass::withCount('books')->findOrFail($id);
-
-        $isCodeEditable = $ddcClass->books_count === 0;
-
-        return view('pustakawan.ddc.edit', compact('ddcClass', 'isCodeEditable'));
+        return view('pustakawan.ddc.edit', [
+            'ddcClass' => $ddc,
+        ]);
     }
 
-    /**
-     * Menyimpan perubahan DDC.
-     *
-     * Kode DDC hanya boleh diedit jika belum ada buku yang memakai DDC tersebut.
-     */
-    public function update(Request $request, $id)
+    public function update(Request $request, DdcClass $ddc)
     {
-        $ddcClass = DdcClass::withCount('books')->findOrFail($id);
-
-        $isCodeEditable = $ddcClass->books_count === 0;
-
-        $rules = [
-            'name' => ['required', 'string', 'max:100'],
-            'description' => ['nullable', 'string', 'max:255'],
-        ];
-
-        if ($isCodeEditable) {
-            $rules['code'] = [
+        $validated = $request->validate([
+            'code' => [
                 'required',
                 'string',
                 'max:20',
-                Rule::unique('ddc_classes', 'code')->ignore($ddcClass->id),
-            ];
-        }
+                Rule::unique('ddc_classes', 'code')->ignore($ddc->id),
+            ],
+            'name' => ['required', 'string', 'max:255'],
+            'description' => ['nullable', 'string', 'max:2000'],
+        ], [
+            'code.required' => 'Kode DDC wajib diisi.',
+            'code.unique' => 'Kode DDC ini sudah digunakan oleh klasifikasi lain.',
+            'name.required' => 'Nama klasifikasi wajib diisi.',
+        ]);
 
-        $validated = $request->validate($rules);
-
-        $updateData = [
-            'name' => $validated['name'],
-            'description' => $validated['description'] ?? null,
-        ];
-
-        if ($isCodeEditable) {
-            $updateData['code'] = $validated['code'];
-        }
-
-        $ddcClass->update($updateData);
+        $ddc->update([
+            'code' => trim($validated['code']),
+            'name' => trim($validated['name']),
+            'description' => !empty($validated['description']) ? trim($validated['description']) : null,
+        ]);
 
         return redirect()
             ->route('ddc.index')
-            ->with('success', 'Master DDC berhasil diperbarui.');
+            ->with('success_title', 'DDC berhasil diperbarui')
+            ->with('success_message', 'Kelas DDC "' . $ddc->code . ' - ' . $ddc->name . '" berhasil diperbarui.')
+            ->with('success_detail', 'Jumlah buku pada DDC akan dihitung otomatis dari Buku Induk.');
+    }
+
+    public function destroy(DdcClass $ddc)
+    {
+        $ddc->loadCount('books');
+
+        if ($ddc->books_count > 0) {
+            return redirect()
+                ->route('ddc.index')
+                ->with('error_title', 'DDC tidak bisa dihapus')
+                ->with('error_message', 'Kelas DDC "' . $ddc->code . ' - ' . $ddc->name . '" masih digunakan oleh ' . $ddc->books_count . ' buku induk.')
+                ->with('error_detail', 'Pindahkan buku induk ke DDC lain terlebih dahulu sebelum menghapus klasifikasi ini.');
+        }
+
+        $code = $ddc->code;
+        $name = $ddc->name;
+
+        $ddc->delete();
+
+        return redirect()
+            ->route('ddc.index')
+            ->with('success_title', 'DDC berhasil dihapus')
+            ->with('success_message', 'Kelas DDC "' . $code . ' - ' . $name . '" berhasil dihapus.');
     }
 }

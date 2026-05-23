@@ -1,29 +1,45 @@
 <?php
+
 namespace App\Models;
 
+use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
-use Illuminate\Database\Eloquent\Relations\BelongsTo;
-use Illuminate\Database\Eloquent\Relations\HasMany;
 
 class Book extends Model
 {
+    use HasFactory;
+
     protected $fillable = [
-        'title', 'author', 'publisher', 'publication_year',
-        'category_id', 'ddc_class_id', 'price', 'is_borrowable', 'description'
+        'title',
+        'author',
+        'author_code',
+        'title_code',
+        'publisher',
+        'publication_year',
+        'price',
+        'category_id',
+        'ddc_class_id',
+        'is_borrowable',
+        'description',
     ];
 
-    public function category(): BelongsTo
+    protected $casts = [
+        'is_borrowable' => 'boolean',
+        'price' => 'decimal:2',
+    ];
+
+    public function category()
     {
-        return $this->belongsTo(Category::class);
+        return $this->belongsTo(Category::class, 'category_id');
     }
 
-    public function ddcClass(): BelongsTo
+    public function ddcClass()
     {
-        return $this->belongsTo(DdcClass::class);
+        return $this->belongsTo(DdcClass::class, 'ddc_class_id');
     }
 
-    public function bookItems(): HasMany
+    public function bookItems()
     {
-        return $this->hasMany(BookItem::class);
+        return $this->hasMany(BookItem::class, 'book_id', 'id');
     }
 }

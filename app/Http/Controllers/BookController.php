@@ -3,113 +3,259 @@
 namespace App\Http\Controllers;
 
 use App\Models\Book;
+use App\Models\BookItem;
 use App\Models\Category;
 use App\Models\DdcClass;
 use Illuminate\Http\Request;
+use Illuminate\Validation\Rule;
 
 class BookController extends Controller
 {
-    /**
-     * Menampilkan daftar semua judul buku.
-     */
     public function index()
     {
-        // Mengambil data buku beserta relasinya ke tabel Kategori dan DDC Class
-        // latest() untuk mengurutkan dari data yang paling baru ditambahkan
-        $books = Book::with(['category', 'ddcClass'])->latest()->get();
-        
+        $books = Book::with(['category', 'ddcClass'])
+            ->withCount([
+                'bookItems as stock_count',
+            ])
+            ->latest()
+            ->get();
+
         return view('pustakawan.books.index', compact('books'));
     }
 
-    /**
-     * Menampilkan form untuk menambah judul buku baru.
-     */
     public function create()
     {
-        // Mengambil semua data kategori dan DDC untuk ditampilkan di pilihan dropdown
-        $categories = Category::all();
-        $ddcClasses = DdcClass::all();
-        
+        $categories = Category::orderBy('name')->get();
+        $ddcClasses = DdcClass::orderBy('code')->get();
+
         return view('pustakawan.books.create', compact('categories', 'ddcClasses'));
     }
 
-    /**
-     * Menyimpan data buku baru ke dalam database.
-     */
     public function store(Request $request)
     {
-        // 1. Validasi inputan dari form
-        $validatedData = $request->validate([
-            'title' => 'required|string|max:255',
-            'author' => 'required|string|max:255',
-            'publisher' => 'required|string|max:255',
-            'publication_year' => 'required|digits:4|integer|min:1900|max:' . (date('Y') + 1),
-            'category_id' => 'nullable|exists:categories,id',
-            'ddc_class_id' => 'nullable|exists:ddc_classes,id',
-            'price' => 'nullable|numeric|min:0',
-            'is_borrowable' => 'required|boolean', // 1 untuk boleh dipinjam, 0 untuk baca di tempat (referensi)
-            'description' => 'nullable|string',
+        $request->merge([
+            'price' => $request->filled('price')
+                ? str_replace(',', '.', $request->price)
+                : null,
         ]);
 
-        // 2. Simpan ke database
-        Book::create($validatedData);
+        $validated = $request->validate([
+            'title' => ['required', 'string', 'max:255'],
+            'author' => ['required', 'string', 'max:150'],
+            'author_code' => ['required', 'string', 'max:50'],
+            'title_code' => ['required', 'string', 'max:50'],
+            'publisher' => ['required', 'string', 'max:150'],
+            'publication_year' => ['nullable', 'integer', 'min:1900', 'max:' . (date('Y') + 1)],
+            'price' => ['nullable', 'numeric', 'min:0'],
+            'category_id' => ['required', 'exists:categories,id'],
+            'ddc_class_id' => ['required', 'exists:ddc_classes,id'],
+            'borrowing_status' => ['required', Rule::in(['bisa dipinjam', 'tidak bisa dipinjam'])],
+            'description' => ['nullable', 'string', 'max:2000'],
+        ], $this->validationMessages(), $this->validationAttributes());
 
-        // 3. Kembalikan ke halaman daftar buku dengan pesan sukses
-        return redirect()->route('books.index')->with('success', 'Data judul buku berhasil ditambahkan!');
+        $book = Book::create([
+            'title' => trim($validated['title']),
+            'author' => trim($validated['author']),
+            'author_code' => trim($validated['author_code']),
+            'title_code' => trim($validated['title_code']),
+            'publisher' => trim($validated['publisher']),
+            'publication_year' => $validated['publication_year'] ?? null,
+            'price' => $validated['price'] ?? null,
+            'category_id' => $validated['category_id'],
+            'ddc_class_id' => $validated['ddc_class_id'],
+            'is_borrowable' => $validated['borrowing_status'] === 'bisa dipinjam' ? 1 : 0,
+            'description' => !empty($validated['description']) ? trim($validated['description']) : null,
+        ]);
+
+        return redirect()
+            ->route('books.show', $book)
+            ->with('success_title', 'Buku induk berhasil ditambahkan')
+            ->with('success_message', 'Buku "' . $book->title . '" berhasil ditambahkan.')
+            ->with('success_detail', 'Kode penulis dan kode judul akan digunakan otomatis pada kode eksemplar.');
     }
 
-    /**
-     * Menampilkan detail satu judul buku.
-     */
     public function show(Book $book)
     {
-        // Memuat relasi bookItems agar saat melihat detail judul, 
-        // kita juga bisa melihat daftar eksemplar fisik/copy dari buku tersebut
-        $book->load('bookItems'); 
-        
+        $book->load(['category', 'ddcClass', 'bookItems']);
+
         return view('pustakawan.books.show', compact('book'));
     }
 
-    /**
-     * Menampilkan form untuk mengedit data buku.
-     */
     public function edit(Book $book)
     {
-        $categories = Category::all();
-        $ddcClasses = DdcClass::all();
-        
+        $categories = Category::orderBy('name')->get();
+        $ddcClasses = DdcClass::orderBy('code')->get();
+
+        $book->load(['category', 'ddcClass']);
+
         return view('pustakawan.books.edit', compact('book', 'categories', 'ddcClasses'));
     }
 
-    /**
-     * Memperbarui data buku di database.
-     */
     public function update(Request $request, Book $book)
     {
-        $validatedData = $request->validate([
-            'title' => 'required|string|max:255',
-            'author' => 'required|string|max:255',
-            'publisher' => 'required|string|max:255',
-            'publication_year' => 'required|digits:4|integer|min:1900|max:' . (date('Y') + 1),
-            'category_id' => 'nullable|exists:categories,id',
-            'ddc_class_id' => 'nullable|exists:ddc_classes,id',
-            'price' => 'nullable|numeric|min:0',
-            'is_borrowable' => 'required|boolean',
-            'description' => 'nullable|string',
+        $request->merge([
+            'price' => $request->filled('price')
+                ? str_replace(',', '.', $request->price)
+                : null,
         ]);
 
-        $book->update($validatedData);
+        $validated = $request->validate([
+            'title' => ['required', 'string', 'max:255'],
+            'author' => ['required', 'string', 'max:150'],
+            'author_code' => ['required', 'string', 'max:50'],
+            'title_code' => ['required', 'string', 'max:50'],
+            'publisher' => ['required', 'string', 'max:150'],
+            'publication_year' => ['nullable', 'integer', 'min:1900', 'max:' . (date('Y') + 1)],
+            'price' => ['nullable', 'numeric', 'min:0'],
+            'category_id' => ['required', 'exists:categories,id'],
+            'ddc_class_id' => ['required', 'exists:ddc_classes,id'],
+            'borrowing_status' => ['required', Rule::in(['bisa dipinjam', 'tidak bisa dipinjam'])],
+            'description' => ['nullable', 'string', 'max:2000'],
+        ], $this->validationMessages(), $this->validationAttributes());
 
-        return redirect()->route('books.index')->with('success', 'Data judul buku berhasil diperbarui!');
+        $book->update([
+            'title' => trim($validated['title']),
+            'author' => trim($validated['author']),
+            'author_code' => trim($validated['author_code']),
+            'title_code' => trim($validated['title_code']),
+            'publisher' => trim($validated['publisher']),
+            'publication_year' => $validated['publication_year'] ?? null,
+            'price' => $validated['price'] ?? null,
+            'category_id' => $validated['category_id'],
+            'ddc_class_id' => $validated['ddc_class_id'],
+            'is_borrowable' => $validated['borrowing_status'] === 'bisa dipinjam' ? 1 : 0,
+            'description' => !empty($validated['description']) ? trim($validated['description']) : null,
+        ]);
+
+        $syncResult = $this->syncBookItemsFromBook($book->fresh());
+
+        return redirect()
+            ->route('books.show', $book)
+            ->with('success_title', 'Buku induk berhasil diperbarui')
+            ->with('success_message', 'Data buku "' . $book->title . '" berhasil diperbarui.')
+            ->with('success_detail', 'Sebanyak ' . $syncResult['updated'] . ' eksemplar berhasil disinkronkan. ' . $syncResult['skipped'] . ' eksemplar dilewati karena konflik kode.');
     }
 
-    /**
-     * Menghapus data buku.
-     */
     public function destroy(Book $book)
     {
+        if ($book->bookItems()->count() > 0) {
+            return redirect()
+                ->route('books.index')
+                ->with('error_title', 'Buku tidak bisa dihapus')
+                ->with('error_message', 'Buku "' . $book->title . '" masih memiliki data eksemplar.')
+                ->with('error_detail', 'Hapus eksemplar buku terlebih dahulu sebelum menghapus buku induk.');
+        }
+
+        $title = $book->title;
+
         $book->delete();
 
-        return redirect()->route('books.index')->with('success', 'Data judul buku berhasil dihapus!');
+        return redirect()
+            ->route('books.index')
+            ->with('success_title', 'Buku induk berhasil dihapus')
+            ->with('success_message', 'Buku "' . $title . '" berhasil dihapus dari katalog.')
+            ->with('success_detail', 'Data buku tidak akan tampil lagi pada daftar buku induk.');
+    }
+
+    private function syncBookItemsFromBook(Book $book): array
+    {
+        $book->load(['ddcClass', 'bookItems']);
+
+        $classificationCode = $book->ddcClass->code ?? '000';
+        $authorCode = $book->author_code ?: $this->makeAuthorCode($book->author);
+        $titleCode = $book->title_code ?: $this->makeTitleCode($book->title);
+
+        $updated = 0;
+        $skipped = 0;
+
+        foreach ($book->bookItems as $item) {
+            $copyNumber = (int) ($item->copy_number ?: 1);
+
+            $newItemCode = $this->buildItemCode(
+                $classificationCode,
+                $authorCode,
+                $titleCode,
+                $copyNumber
+            );
+
+            $exists = BookItem::where('item_code', $newItemCode)
+                ->where('id', '!=', $item->id)
+                ->exists();
+
+            if ($exists) {
+                $skipped++;
+                continue;
+            }
+
+            $item->update([
+                'classification_code' => $classificationCode,
+                'author_code' => $authorCode,
+                'title_code' => $titleCode,
+                'title_initial' => $titleCode,
+                'item_code' => $newItemCode,
+            ]);
+
+            $updated++;
+        }
+
+        return [
+            'updated' => $updated,
+            'skipped' => $skipped,
+        ];
+    }
+
+    private function buildItemCode(string $classificationCode, string $authorCode, string $titleCode, int $copyNumber): string
+    {
+        return $classificationCode . '-' . $authorCode . '-' . $titleCode . '-' . str_pad($copyNumber, 3, '0', STR_PAD_LEFT);
+    }
+
+    private function makeAuthorCode(?string $author): string
+    {
+        $letters = preg_replace('/[^a-zA-Z]/', '', $author ?? '');
+
+        return $letters ? ucfirst(strtolower(substr($letters, 0, 3))) : 'Pen';
+    }
+
+    private function makeTitleCode(?string $title): string
+    {
+        $letters = preg_replace('/[^a-zA-Z0-9]/', '', $title ?? '');
+
+        return $letters ? strtolower(substr($letters, 0, 1)) : 'b';
+    }
+
+    private function validationMessages(): array
+    {
+        return [
+            'title.required' => 'Judul buku wajib diisi.',
+            'author.required' => 'Penulis wajib diisi.',
+            'author_code.required' => 'Kode penulis wajib diisi.',
+            'title_code.required' => 'Kode judul wajib diisi.',
+            'publisher.required' => 'Penerbit wajib diisi.',
+            'category_id.required' => 'Kategori wajib dipilih.',
+            'category_id.exists' => 'Kategori yang dipilih tidak tersedia.',
+            'ddc_class_id.required' => 'Kelas DDC wajib dipilih.',
+            'ddc_class_id.exists' => 'Kelas DDC yang dipilih tidak tersedia.',
+            'borrowing_status.required' => 'Status peminjaman wajib dipilih.',
+            'borrowing_status.in' => 'Status peminjaman yang dipilih tidak valid.',
+            'publication_year.integer' => 'Tahun terbit harus berupa angka.',
+            'price.numeric' => 'Harga buku harus berupa angka.',
+        ];
+    }
+
+    private function validationAttributes(): array
+    {
+        return [
+            'title' => 'Judul buku',
+            'author' => 'Penulis',
+            'author_code' => 'Kode penulis',
+            'title_code' => 'Kode judul',
+            'publisher' => 'Penerbit',
+            'publication_year' => 'Tahun terbit',
+            'price' => 'Harga buku',
+            'category_id' => 'Kategori',
+            'ddc_class_id' => 'Kelas DDC',
+            'borrowing_status' => 'Status peminjaman',
+            'description' => 'Deskripsi',
+        ];
     }
 }

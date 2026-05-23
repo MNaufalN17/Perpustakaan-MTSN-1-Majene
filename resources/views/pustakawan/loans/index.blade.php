@@ -77,7 +77,10 @@
                             <tbody class="divide-y divide-emerald-50 bg-white">
                                 @forelse($loans as $loan)
                                     @php
-                                        $isOverdue = \Carbon\Carbon::now()->startOfDay()->gt(\Carbon\Carbon::parse($loan->due_date)->startOfDay()) && $loan->status == 'aktif';
+                                        $isOverdue = \Carbon\Carbon::now()->startOfDay()->gt(\Carbon\Carbon::parse($loan->due_date)->startOfDay())
+                                            && in_array($loan->status, ['aktif', 'terlambat']);
+
+                                        $canProcess = in_array($loan->status, ['aktif', 'terlambat']) || $isOverdue;
                                     @endphp
 
                                     <tr class="transition-colors hover:bg-emerald-50/70">
@@ -101,28 +104,29 @@
                                         </td>
 
                                         <td class="px-6 py-4">
-                                            <span class="{{ $isOverdue ? 'inline-flex items-center gap-1 font-bold text-red-600' : 'text-gray-700' }}">
-                                                @if($isOverdue)
+                                            <span class="{{ $isOverdue || $loan->status === 'terlambat' ? 'inline-flex items-center gap-1 font-bold text-red-600' : 'text-gray-700' }}">
+                                                @if($isOverdue || $loan->status === 'terlambat')
                                                     <span class="material-symbols-outlined text-[16px]">warning</span>
                                                 @endif
+
                                                 {{ \Carbon\Carbon::parse($loan->due_date)->format('d M Y') }}
                                             </span>
                                         </td>
 
                                         <td class="px-6 py-4">
-                                            @if($loan->status == 'aktif' && $isOverdue)
+                                            @if($loan->status === 'terlambat' || $isOverdue)
                                                 <span class="inline-flex rounded-full border border-red-200 bg-red-50 px-3 py-1 text-xs font-bold text-red-700">
                                                     TERLAMBAT
                                                 </span>
-                                            @elseif($loan->status == 'aktif')
+                                            @elseif($loan->status === 'aktif')
                                                 <span class="inline-flex rounded-full border border-amber-200 bg-amber-50 px-3 py-1 text-xs font-bold text-amber-700">
                                                     DIPINJAM
                                                 </span>
-                                            @elseif($loan->status == 'selesai')
+                                            @elseif($loan->status === 'selesai')
                                                 <span class="inline-flex rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-xs font-bold text-emerald-700">
                                                     SELESAI
                                                 </span>
-                                            @elseif($loan->status == 'batal')
+                                            @elseif($loan->status === 'batal')
                                                 <span class="inline-flex rounded-full border border-gray-200 bg-gray-50 px-3 py-1 text-xs font-bold text-gray-600">
                                                     BATAL
                                                 </span>
@@ -141,7 +145,7 @@
                                                     Lihat
                                                 </a>
 
-                                                @if($loan->status == 'aktif')
+                                                @if($canProcess)
                                                     <a href="{{ route('loans.edit', $loan->id) }}"
                                                        class="inline-flex items-center gap-1 rounded-full border border-teal-200 bg-teal-50 px-3 py-1.5 text-xs font-bold text-teal-700 transition hover:bg-teal-100">
                                                         <span class="material-symbols-outlined text-[15px]">assignment_return</span>

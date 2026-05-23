@@ -22,11 +22,26 @@
     </x-slot>
 
     @php
-        $today = \Carbon\Carbon::today();
+        $today = \Carbon\Carbon::today()->startOfDay();
         $dueDate = \Carbon\Carbon::parse($loan->due_date)->startOfDay();
-        $isOverdue = $loan->status === 'aktif' && $today->gt($dueDate);
+
+        $isActiveLoan = in_array($loan->status, ['aktif', 'terlambat']);
+        $isOverdue = $isActiveLoan && $today->gt($dueDate);
+
         $lateDays = $isOverdue ? (int) $dueDate->diffInDays($today) : 0;
-        $totalFine = $loan->loanItems->sum('fine_amount');
+        $finePerDay = 500;
+
+        $activeItemCount = $loan->loanItems
+            ->whereIn('status', ['dipinjam', 'terlambat'])
+            ->count();
+
+        $storedFine = (int) $loan->loanItems->sum('fine_amount');
+
+        $runningFine = $isOverdue
+            ? $lateDays * $finePerDay * $activeItemCount
+            : 0;
+
+        $totalFine = $storedFine + $runningFine;
     @endphp
 
     <div class="py-10 bg-gradient-to-br from-slate-50 via-emerald-50/40 to-sky-50/40 min-h-screen">
@@ -94,7 +109,7 @@
                             </p>
 
                             <div class="mt-3">
-                                @if($loan->status === 'aktif' && $isOverdue)
+                                @if($isOverdue)
                                     <span class="inline-flex items-center gap-1.5 rounded-full border border-red-200 bg-red-50 px-3 py-1.5 text-xs font-bold text-red-700">
                                         <span class="material-symbols-outlined text-[14px]">warning</span>
                                         Terlambat {{ $lateDays }} Hari
@@ -174,6 +189,14 @@
 
                                 <tbody class="divide-y divide-emerald-50 bg-white">
                                     @forelse($loan->loanItems as $index => $item)
+                                        @php
+                                            $itemRunningFine = $isOverdue && in_array($item->status, ['dipinjam', 'terlambat'])
+                                                ? $lateDays * $finePerDay
+                                                : 0;
+
+                                            $itemTotalFine = (int) ($item->fine_amount ?? 0) + $itemRunningFine;
+                                        @endphp
+
                                         <tr>
                                             <td class="px-5 py-4 text-gray-500">
                                                 {{ $index + 1 }}
@@ -230,7 +253,7 @@
                                             </td>
 
                                             <td class="px-5 py-4 text-right font-bold text-gray-900">
-                                                Rp {{ number_format($item->fine_amount ?? 0, 0, ',', '.') }}
+                                                Rp {{ number_format($itemTotalFine, 0, ',', '.') }}
                                             </td>
                                         </tr>
                                     @empty
@@ -267,7 +290,11 @@
                                 Rp {{ number_format($totalFine, 0, ',', '.') }}
                             </p>
                             <p class="mt-1 text-xs text-rose-700">
-                                Total denda dari seluruh buku pada transaksi ini.
+                                @if($runningFine > 0)
+                                    Total denda berjalan dari seluruh buku yang masih dipinjam.
+                                @else
+                                    Total denda dari seluruh buku pada transaksi ini.
+                                @endif
                             </p>
                         </div>
                     </section>
@@ -283,7 +310,7 @@
 
             {{-- Tombol Aksi --}}
             <div class="mt-6 flex flex-col gap-3 sm:flex-row sm:justify-end no-print">
-                @if($loan->status === 'aktif')
+                @if(in_array($loan->status, ['aktif', 'terlambat']))
                     <a href="{{ route('loans.edit', $loan) }}"
                        class="inline-flex items-center justify-center gap-2 rounded-2xl bg-emerald-700 px-6 py-3 text-sm font-bold text-white shadow-lg shadow-emerald-700/20 transition hover:bg-emerald-800">
                         <span class="material-symbols-outlined text-[18px]">assignment_return</span>
