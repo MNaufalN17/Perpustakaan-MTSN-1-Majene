@@ -17,6 +17,6 @@ class DdcClass extends Model
 
     public function books()
     {
-        return $this->hasMany(Book::class, 'ddc_class_id');
+        return $this->hasMany(Book::class, 'ddc_class_id', 'id');
     }
 }

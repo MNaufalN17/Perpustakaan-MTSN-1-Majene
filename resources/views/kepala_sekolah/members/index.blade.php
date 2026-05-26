@@ -1,29 +1,23 @@
 <x-app-layout>
-    @php
-        $canManage = (int) auth()->user()->role_id === 1;
-    @endphp
-
     <x-slot name="header">
         <div class="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
             <div>
                 <p class="text-xs font-bold uppercase tracking-[0.18em] text-emerald-700">
-                    Manajemen Anggota
+                    Data Anggota
                 </p>
                 <h2 class="mt-1 text-xl font-bold text-gray-900">
                     Data Anggota Perpustakaan
                 </h2>
                 <p class="mt-1 text-sm text-gray-500">
-                    Kelola data siswa dan guru yang terdaftar sebagai anggota perpustakaan.
+                    Halaman ini bersifat read-only untuk Kepala Sekolah/Kepala Perpustakaan.
                 </p>
             </div>
 
-            @if($canManage)
-                <a href="{{ route('members.create') }}"
-                   class="inline-flex items-center justify-center gap-2 rounded-2xl bg-emerald-700 px-5 py-3 text-sm font-semibold text-white shadow-sm transition hover:bg-emerald-800">
-                    <span class="material-symbols-outlined text-[18px]">person_add</span>
-                    Tambah Anggota
-                </a>
-            @endif
+            <a href="{{ route('kepala_sekolah.dashboard') }}"
+               class="inline-flex items-center justify-center gap-2 rounded-2xl border border-gray-200 bg-white px-5 py-3 text-sm font-bold text-gray-600 transition hover:bg-gray-50">
+                <span class="material-symbols-outlined text-[18px]">arrow_back</span>
+                Dashboard
+            </a>
         </div>
     </x-slot>
 
@@ -71,58 +65,6 @@
         }"
     >
         <div class="mx-auto max-w-7xl sm:px-6 lg:px-8">
-
-            @if(session('success') || session('success_title') || session('success_message'))
-                <div class="mb-5 rounded-2xl border border-emerald-200 bg-emerald-50 p-4 text-emerald-800 shadow-sm">
-                    <div class="flex items-start gap-3">
-                        <div class="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-emerald-100 text-emerald-700">
-                            <span class="material-symbols-outlined text-[20px]">check_circle</span>
-                        </div>
-
-                        <div>
-                            <p class="text-sm font-bold">
-                                {{ session('success_title', 'Berhasil') }}
-                            </p>
-
-                            <p class="mt-1 text-sm leading-6">
-                                {{ session('success_message', session('success')) }}
-                            </p>
-
-                            @if(session('success_detail'))
-                                <p class="mt-1 text-xs leading-5 text-emerald-700">
-                                    {{ session('success_detail') }}
-                                </p>
-                            @endif
-                        </div>
-                    </div>
-                </div>
-            @endif
-
-            @if(session('error') || session('error_title') || session('error_message'))
-                <div class="mb-5 rounded-2xl border border-red-200 bg-red-50 p-4 text-red-800 shadow-sm">
-                    <div class="flex items-start gap-3">
-                        <div class="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-red-100 text-red-700">
-                            <span class="material-symbols-outlined text-[20px]">error</span>
-                        </div>
-
-                        <div>
-                            <p class="text-sm font-bold">
-                                {{ session('error_title', 'Gagal') }}
-                            </p>
-
-                            <p class="mt-1 text-sm leading-6">
-                                {{ session('error_message', session('error')) }}
-                            </p>
-
-                            @if(session('error_detail'))
-                                <p class="mt-1 text-xs leading-5 text-red-700">
-                                    {{ session('error_detail') }}
-                                </p>
-                            @endif
-                        </div>
-                    </div>
-                </div>
-            @endif
 
             <div class="overflow-hidden rounded-[2rem] border border-white/70 bg-white/80 shadow-[0_18px_50px_rgba(15,23,42,0.06)] backdrop-blur-xl">
 
@@ -254,7 +196,7 @@
                                     <th class="px-5 py-4 font-bold w-[140px]">Jenis</th>
                                     <th class="px-5 py-4 font-bold w-[170px]">Kelas</th>
                                     <th class="px-5 py-4 font-bold w-[140px]">Status</th>
-                                    <th class="px-5 py-4 text-center font-bold w-[230px]">Aksi</th>
+                                    <th class="px-5 py-4 text-center font-bold w-[120px]">Aksi</th>
                                 </tr>
                             </thead>
 
@@ -337,42 +279,12 @@
                                             @endif
                                         </td>
 
-                                        <td class="px-5 py-4 align-middle">
-                                            <div class="mx-auto {{ $canManage ? 'w-[210px]' : 'w-[110px]' }} rounded-2xl border border-gray-100 bg-slate-50 p-2 shadow-sm">
-                                                <div class="grid {{ $canManage ? 'grid-cols-2' : 'grid-cols-1' }} gap-2">
-                                                    <a href="{{ route('members.show', $member) }}"
-                                                       class="inline-flex h-9 items-center justify-center gap-1.5 rounded-xl border border-emerald-200 bg-white px-3 text-xs font-bold text-emerald-700 transition hover:bg-emerald-50">
-                                                        <span class="material-symbols-outlined text-[15px]">visibility</span>
-                                                        Lihat
-                                                    </a>
-
-                                                    @if($canManage)
-                                                        <a href="{{ route('members.edit', $member) }}"
-                                                           class="inline-flex h-9 items-center justify-center gap-1.5 rounded-xl border border-teal-200 bg-white px-3 text-xs font-bold text-teal-700 transition hover:bg-teal-50">
-                                                            <span class="material-symbols-outlined text-[15px]">edit</span>
-                                                            Edit
-                                                        </a>
-
-                                                        <form
-                                                            method="POST"
-                                                            action="{{ route('members.destroy', $member) }}"
-                                                            class="col-span-2"
-                                                            onsubmit="return confirm('Hapus anggota ini dari sistem?')"
-                                                        >
-                                                            @csrf
-                                                            @method('DELETE')
-
-                                                            <button
-                                                                type="submit"
-                                                                class="inline-flex h-9 w-full items-center justify-center gap-1.5 rounded-xl border border-red-200 bg-red-50 px-3 text-xs font-bold text-red-700 transition hover:bg-red-100"
-                                                            >
-                                                                <span class="material-symbols-outlined text-[15px]">delete</span>
-                                                                Hapus Anggota
-                                                            </button>
-                                                        </form>
-                                                    @endif
-                                                </div>
-                                            </div>
+                                        <td class="px-5 py-4 text-center align-middle">
+                                            <a href="{{ route('members.show', $member) }}"
+                                               class="inline-flex h-9 items-center justify-center gap-1.5 rounded-xl border border-emerald-200 bg-white px-3 text-xs font-bold text-emerald-700 transition hover:bg-emerald-50">
+                                                <span class="material-symbols-outlined text-[15px]">visibility</span>
+                                                Lihat
+                                            </a>
                                         </td>
                                     </tr>
                                 @empty
@@ -383,13 +295,6 @@
                                             </div>
                                             <p class="mt-4 text-sm font-semibold text-gray-700">
                                                 Belum ada data anggota.
-                                            </p>
-                                            <p class="mt-1 text-xs text-gray-500">
-                                                @if($canManage)
-                                                    Klik tombol Tambah Anggota untuk menambahkan data siswa atau guru.
-                                                @else
-                                                    Belum ada data anggota yang dapat ditampilkan.
-                                                @endif
                                             </p>
                                         </td>
                                     </tr>

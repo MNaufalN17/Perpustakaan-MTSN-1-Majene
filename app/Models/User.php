@@ -2,19 +2,12 @@
 
 namespace App\Models;
 
-// use Illuminate\Contracts\Auth\MustVerifyEmail;
-use Database\Factories\UserFactory;
-use Illuminate\Database\Eloquent\Attributes\Fillable;
-use Illuminate\Database\Eloquent\Attributes\Hidden;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Foundation\Auth\User as Authenticatable;
 use Illuminate\Notifications\Notifiable;
 
-#[Fillable(['name', 'email', 'password'])]
-#[Hidden(['password', 'remember_token'])]
 class User extends Authenticatable
 {
-    /** @use HasFactory<UserFactory> */
     use HasFactory, Notifiable;
 
     protected $fillable = [
@@ -22,29 +15,45 @@ class User extends Authenticatable
         'email',
         'password',
         'role_id',
-        'status'
-        ];
+        'is_active',
+    ];
 
-        protected $hidden = [
-            'password',
-            'remember_token',
-        ];
+    protected $hidden = [
+        'password',
+        'remember_token',
+    ];
 
-    /**
-     * Get the attributes that should be cast.
-     *
-     * @return array<string, string>
-     */
     protected function casts(): array
     {
         return [
             'email_verified_at' => 'datetime',
             'password' => 'hashed',
+            'is_active' => 'boolean',
         ];
     }
 
-    public function role()
+    public function roleLabel(): string
     {
-        return $this->belongsTo(Role::class);
+        return match ((int) $this->role_id) {
+            1 => 'Pustakawan',
+            2 => 'Kepala Perpustakaan',
+            3 => 'Staff IT Admin',
+            default => 'Pengguna Sistem',
+        };
+    }
+
+    public function isPustakawan(): bool
+    {
+        return (int) $this->role_id === 1;
+    }
+
+    public function isKepalaPerpustakaan(): bool
+    {
+        return (int) $this->role_id === 2;
+    }
+
+    public function isAdmin(): bool
+    {
+        return (int) $this->role_id === 3;
     }
 }

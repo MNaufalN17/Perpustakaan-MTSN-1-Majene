@@ -13,13 +13,17 @@ use Illuminate\Validation\ValidationException;
 class MemberController extends Controller
 {
     public function index()
-    {
-        $members = Member::with('studentClass')
-            ->latest()
-            ->get();
+{
+    $members = \App\Models\Member::with('studentClass')
+        ->latest()
+        ->paginate(10);
 
-        return view('pustakawan.members.index', compact('members'));
+    if ((int) auth()->user()->role_id === 2) {
+        return view('kepala_sekolah.members.index', compact('members'));
     }
+
+    return view('pustakawan.members.index', compact('members'));
+}
 
     public function create()
     {
@@ -31,48 +35,156 @@ class MemberController extends Controller
     }
 
     public function store(Request $request)
-    {
-        if ($request->has('members')) {
-            return $this->storeMany($request);
+{
+    if ($request->has('members')) {
+        $rawMembers = collect($request->input('members', []));
+
+        $filteredMembers = $rawMembers
+            ->filter(function ($member) {
+                return collect([
+                    $member['nis_nip'] ?? null,
+                    $member['name'] ?? null,
+                    $member['gender'] ?? null,
+                    $member['student_class_id'] ?? null,
+                    $member['phone'] ?? null,
+                ])->filter(function ($value) {
+                    return trim((string) $value) !== '';
+                })->isNotEmpty();
+            })
+            ->values()
+            ->toArray();
+
+        if (empty($filteredMembers)) {
+            return back()
+                ->withInput()
+                ->withErrors([
+                    'members' => 'Minimal isi satu baris data anggota sebelum menyimpan.',
+                ]);
         }
 
-        $validated = $request->validate([
-            'nis_nip' => ['required', 'string', 'max:50', 'unique:members,nis_nip'],
-            'name' => ['required', 'string', 'max:150'],
-            'member_type' => ['required', Rule::in(['siswa', 'guru'])],
-            'gender' => ['required', Rule::in(['laki-laki', 'perempuan'])],
-            'student_class_id' => ['nullable', 'required_if:member_type,siswa', 'exists:classes,id'],
-            'phone' => ['nullable', 'string', 'max:30'],
-            'status' => ['nullable', Rule::in(['aktif', 'nonaktif'])],
-            'card_image' => ['nullable', 'image', 'mimes:jpg,jpeg,png,webp', 'max:2048'],
-        ], $this->validationMessages(), $this->validationAttributes());
-
-        $cardImagePath = null;
-
-        if ($request->hasFile('card_image')) {
-            $cardImagePath = $request->file('card_image')->store('member-cards', 'public');
-        }
-
-        $member = Member::create([
-            'member_code' => $this->generateMemberCode($validated['member_type']),
-            'nis_nip' => $validated['nis_nip'],
-            'name' => $validated['name'],
-            'member_type' => $validated['member_type'],
-            'gender' => $validated['gender'],
-            'student_class_id' => $validated['member_type'] === 'siswa'
-                ? $validated['student_class_id']
-                : null,
-            'phone' => $validated['phone'] ?? null,
-            'status' => $validated['status'] ?? 'aktif',
-            'card_image' => $cardImagePath,
+        $request->merge([
+            'members' => $filteredMembers,
         ]);
 
+        $validated = $request->validate([
+            'members' => ['required', 'array', 'min:1', 'max:50'],
+            'members.*.nis_nip' => ['required', 'string', 'max:50', 'distinct', 'unique:members,nis_nip'],
+            'members.*.name' => ['required', 'string', 'max:255'],
+            'members.*.member_type' => ['required', 'in:siswa,guru'],
+            'members.*.gender' => ['required', 'in:laki-laki,perempuan'],
+            'members.*.student_class_id' => ['nullable', 'exists:classes,id'],
+            'members.*.phone' => ['nullable', 'string', 'max:30'],
+            'members.*.status' => ['required', 'in:aktif,nonaktif'],
+        ], [
+            'members.required' => 'Minimal satu data anggota wajib diisi.',
+            'members.min' => 'Minimal satu data anggota wajib diisi.',
+            'members.max' => 'Maksimal 50 anggota dalam satu kali simpan.',
+
+            'members.*.nis_nip.required' => 'NIS / NIP wajib diisi pada baris yang digunakan.',
+            'members.*.nis_nip.distinct' => 'NIS / NIP tidak boleh sama antar baris.',
+            'members.*.nis_nip.unique' => 'NIS / NIP sudah terdaftar.',
+            'members.*.name.required' => 'Nama wajib diisi pada baris yang digunakan.',
+            'members.*.member_type.required' => 'Jenis anggota wajib dipilih.',
+            'members.*.member_type.in' => 'Jenis anggota tidak valid.',
+            'members.*.gender.required' => 'Jenis kelamin wajib dipilih pada baris yang digunakan.',
+            'members.*.gender.in' => 'Jenis kelamin tidak valid.',
+            'members.*.student_class_id.exists' => 'Kelas yang dipilih tidak tersedia.',
+            'members.*.status.required' => 'Status wajib dipilih.',
+            'members.*.status.in' => 'Status anggota tidak valid.',
+        ]);
+
+        foreach ($validated['members'] as $index => $member) {
+            if ($member['member_type'] === 'siswa' && empty($member['student_class_id'])) {
+                return back()
+                    ->withInput()
+                    ->withErrors([
+                        "members.$index.student_class_id" => 'Baris ke-' . ($index + 1) . ': kelas wajib dipilih untuk anggota siswa.',
+                    ]);
+            }
+        }
+
+        foreach ($validated['members'] as $member) {
+            \App\Models\Member::create([
+                'member_code' => $this->generateMemberCode($member['member_type']),
+                'nis_nip' => trim($member['nis_nip']),
+                'name' => trim($member['name']),
+                'member_type' => $member['member_type'],
+                'gender' => $member['gender'],
+                'student_class_id' => $member['member_type'] === 'siswa'
+                    ? $member['student_class_id']
+                    : null,
+                'phone' => !empty($member['phone']) ? trim($member['phone']) : null,
+                'status' => $member['status'],
+                'card_image' => null,
+            ]);
+        }
+
         return redirect()
-            ->route('members.show', $member)
+            ->route('members.index')
             ->with('success_title', 'Anggota berhasil ditambahkan')
-            ->with('success_message', 'Data anggota "' . $member->name . '" berhasil ditambahkan ke sistem.')
-            ->with('success_detail', 'Anggota sudah dapat digunakan pada proses peminjaman buku.');
+            ->with('success_message', count($validated['members']) . ' anggota berhasil ditambahkan.')
+            ->with('success_detail', 'Baris kosong otomatis dilewati dan tidak ikut disimpan.');
     }
+
+    $validated = $request->validate([
+        'nis_nip' => ['required', 'string', 'max:50', 'unique:members,nis_nip'],
+        'name' => ['required', 'string', 'max:255'],
+        'member_type' => ['required', 'in:siswa,guru'],
+        'gender' => ['required', 'in:laki-laki,perempuan'],
+        'student_class_id' => ['nullable', 'exists:classes,id'],
+        'phone' => ['nullable', 'string', 'max:30'],
+        'status' => ['required', 'in:aktif,nonaktif'],
+        'card_image' => ['nullable', 'image', 'mimes:jpg,jpeg,png,webp', 'max:2048'],
+    ], [
+        'nis_nip.required' => 'NIS / NIP wajib diisi.',
+        'nis_nip.unique' => 'NIS / NIP sudah terdaftar.',
+        'name.required' => 'Nama lengkap wajib diisi.',
+        'member_type.required' => 'Jenis anggota wajib dipilih.',
+        'member_type.in' => 'Jenis anggota tidak valid.',
+        'gender.required' => 'Jenis kelamin wajib dipilih.',
+        'gender.in' => 'Jenis kelamin tidak valid.',
+        'student_class_id.exists' => 'Kelas yang dipilih tidak tersedia.',
+        'status.required' => 'Status keanggotaan wajib dipilih.',
+        'status.in' => 'Status anggota tidak valid.',
+        'card_image.image' => 'File kartu anggota harus berupa gambar.',
+        'card_image.mimes' => 'Kartu anggota harus berformat JPG, JPEG, PNG, atau WEBP.',
+        'card_image.max' => 'Ukuran kartu anggota maksimal 2MB.',
+    ]);
+
+    if ($validated['member_type'] === 'siswa' && empty($validated['student_class_id'])) {
+        return back()
+            ->withInput()
+            ->withErrors([
+                'student_class_id' => 'Kelas wajib dipilih untuk anggota siswa.',
+            ]);
+    }
+
+    $cardImagePath = null;
+
+    if ($request->hasFile('card_image')) {
+        $cardImagePath = $request->file('card_image')->store('member-cards', 'public');
+    }
+
+    $member = \App\Models\Member::create([
+        'member_code' => $this->generateMemberCode($validated['member_type']),
+        'nis_nip' => trim($validated['nis_nip']),
+        'name' => trim($validated['name']),
+        'member_type' => $validated['member_type'],
+        'gender' => $validated['gender'],
+        'student_class_id' => $validated['member_type'] === 'siswa'
+            ? $validated['student_class_id']
+            : null,
+        'phone' => !empty($validated['phone']) ? trim($validated['phone']) : null,
+        'status' => $validated['status'],
+        'card_image' => $cardImagePath,
+    ]);
+
+    return redirect()
+        ->route('members.show', $member)
+        ->with('success_title', 'Anggota berhasil ditambahkan')
+        ->with('success_message', 'Anggota "' . $member->name . '" berhasil ditambahkan.')
+        ->with('success_detail', 'Kode anggota dibuat otomatis oleh sistem.');
+}
 
     private function storeMany(Request $request)
     {
@@ -150,12 +262,16 @@ class MemberController extends Controller
             ->with('success_detail', 'Kartu anggota dapat ditambahkan nanti melalui halaman detail atau edit anggota.');
     }
 
-    public function show(Member $member)
-    {
-        $member->load('studentClass');
+    public function show(\App\Models\Member $member)
+{
+    $member->load('studentClass');
 
-        return view('pustakawan.members.show', compact('member'));
+    if ((int) auth()->user()->role_id === 2) {
+        return view('kepala_sekolah.members.show', compact('member'));
     }
+
+    return view('pustakawan.members.show', compact('member'));
+}
 
     public function edit(Member $member)
     {

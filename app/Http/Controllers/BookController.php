@@ -13,12 +13,14 @@ class BookController extends Controller
 {
     public function index()
     {
-        $books = Book::with(['category', 'ddcClass'])
-            ->withCount([
-                'bookItems as stock_count',
-            ])
+        $books = \App\Models\Book::with(['category', 'ddcClass'])
+            ->withCount('bookItems')
             ->latest()
-            ->get();
+            ->paginate(10);
+
+        if ((int) auth()->user()->role_id === 2) {
+            return view('kepala_sekolah.books.index', compact('books'));
+        }
 
         return view('pustakawan.books.index', compact('books'));
     }
@@ -74,9 +76,13 @@ class BookController extends Controller
             ->with('success_detail', 'Kode penulis dan kode judul akan digunakan otomatis pada kode eksemplar.');
     }
 
-    public function show(Book $book)
+    public function show(\App\Models\Book $book)
     {
         $book->load(['category', 'ddcClass', 'bookItems']);
+
+        if ((int) auth()->user()->role_id === 2) {
+            return view('kepala_sekolah.books.show', compact('book'));
+        }
 
         return view('pustakawan.books.show', compact('book'));
     }

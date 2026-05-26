@@ -1,13 +1,14 @@
 <?php
 
-namespace App\Http\Controllers;
+namespace App\Http\Controllers\Admin;
 
+use App\Http\Controllers\Controller;
 use App\Models\User;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Validation\Rule;
 
-class UserController extends Controller
+class UserManagementController extends Controller
 {
     public function index()
     {
@@ -24,62 +25,36 @@ class UserController extends Controller
     public function store(Request $request)
     {
         $validated = $request->validate([
-            'name' => [
-                'required',
-                'string',
-                'max:255',
-            ],
-            'email' => [
-                'required',
-                'email',
-                'max:255',
-                'unique:users,email',
-            ],
-            'role_id' => [
-                'required',
-                Rule::in([1, 2, 3]),
-            ],
-            'is_active' => [
-                'required',
-                Rule::in([0, 1]),
-            ],
-            'password' => [
-                'required',
-                'string',
-                'min:8',
-                'confirmed',
-            ],
+            'name' => ['required', 'string', 'max:255'],
+            'email' => ['required', 'email', 'max:255', 'unique:users,email'],
+            'role' => ['required', Rule::in(['admin', 'pustakawan', 'kepala_perpustakaan'])],
+            'password' => ['required', 'string', 'min:8', 'confirmed'],
+            'is_active' => ['required', 'boolean'],
         ], [
-            'name.required' => 'Nama user wajib diisi.',
-            'email.required' => 'Email user wajib diisi.',
+            'name.required' => 'Nama pengguna wajib diisi.',
+            'email.required' => 'Email wajib diisi.',
             'email.email' => 'Format email tidak valid.',
-            'email.unique' => 'Email ini sudah digunakan oleh user lain.',
-            'role_id.required' => 'Role user wajib dipilih.',
-            'role_id.in' => 'Role user tidak valid.',
-            'is_active.required' => 'Status akun wajib dipilih.',
-            'is_active.in' => 'Status akun tidak valid.',
+            'email.unique' => 'Email ini sudah digunakan.',
+            'role.required' => 'Role pengguna wajib dipilih.',
+            'role.in' => 'Role pengguna tidak valid.',
             'password.required' => 'Password wajib diisi.',
             'password.min' => 'Password minimal 8 karakter.',
             'password.confirmed' => 'Konfirmasi password tidak sesuai.',
+            'is_active.required' => 'Status akun wajib dipilih.',
         ]);
 
         User::create([
             'name' => trim($validated['name']),
             'email' => trim($validated['email']),
-            'role_id' => (int) $validated['role_id'],
-            'is_active' => (bool) $validated['is_active'],
+            'role' => $validated['role'],
             'password' => Hash::make($validated['password']),
+            'is_active' => (bool) $validated['is_active'],
         ]);
 
         return redirect()
-            ->route('users.index')
+            ->route('admin.users.index')
             ->with('success_title', 'User berhasil ditambahkan')
-            ->with('success_message', 'Akun user baru berhasil dibuat dan sudah masuk ke daftar user sistem.');
-    }
-
-    public function show(User $user)
-    {
-        return redirect()->route('users.edit', $user);
+            ->with('success_message', 'Akun pengguna baru berhasil dibuat.');
     }
 
     public function edit(User $user)
@@ -90,52 +65,36 @@ class UserController extends Controller
     public function update(Request $request, User $user)
     {
         $validated = $request->validate([
-            'name' => [
-                'required',
-                'string',
-                'max:255',
-            ],
+            'name' => ['required', 'string', 'max:255'],
             'email' => [
                 'required',
                 'email',
                 'max:255',
                 Rule::unique('users', 'email')->ignore($user->id),
             ],
-            'role_id' => [
-                'required',
-                Rule::in([1, 2, 3]),
-            ],
-            'is_active' => [
-                'required',
-                Rule::in([0, 1]),
-            ],
-            'password' => [
-                'nullable',
-                'string',
-                'min:8',
-                'confirmed',
-            ],
+            'role' => ['required', Rule::in(['admin', 'pustakawan', 'kepala_perpustakaan'])],
+            'password' => ['nullable', 'string', 'min:8', 'confirmed'],
+            'is_active' => ['required', 'boolean'],
         ], [
-            'name.required' => 'Nama user wajib diisi.',
-            'email.required' => 'Email user wajib diisi.',
+            'name.required' => 'Nama pengguna wajib diisi.',
+            'email.required' => 'Email wajib diisi.',
             'email.email' => 'Format email tidak valid.',
-            'email.unique' => 'Email ini sudah digunakan oleh user lain.',
-            'role_id.required' => 'Role user wajib dipilih.',
-            'role_id.in' => 'Role user tidak valid.',
-            'is_active.required' => 'Status akun wajib dipilih.',
-            'is_active.in' => 'Status akun tidak valid.',
+            'email.unique' => 'Email ini sudah digunakan oleh akun lain.',
+            'role.required' => 'Role pengguna wajib dipilih.',
+            'role.in' => 'Role pengguna tidak valid.',
             'password.min' => 'Password minimal 8 karakter.',
             'password.confirmed' => 'Konfirmasi password tidak sesuai.',
+            'is_active.required' => 'Status akun wajib dipilih.',
         ]);
 
-        if ($user->id === auth()->id() && (int) $validated['role_id'] !== 3) {
+        if ($user->id === auth()->id() && $validated['role'] !== 'admin') {
             return back()
                 ->withInput()
                 ->with('error_title', 'Role tidak bisa diubah')
-                ->with('error_message', 'Anda tidak bisa mengubah role akun sendiri dari Staff IT Admin menjadi role lain.');
+                ->with('error_message', 'Anda tidak bisa mengubah role akun sendiri dari Admin menjadi role lain.');
         }
 
-        if ($user->id === auth()->id() && (int) $validated['is_active'] === 0) {
+        if ($user->id === auth()->id() && !(bool) $validated['is_active']) {
             return back()
                 ->withInput()
                 ->with('error_title', 'Akun tidak bisa dinonaktifkan')
@@ -145,7 +104,7 @@ class UserController extends Controller
         $data = [
             'name' => trim($validated['name']),
             'email' => trim($validated['email']),
-            'role_id' => (int) $validated['role_id'],
+            'role' => $validated['role'],
             'is_active' => (bool) $validated['is_active'],
         ];
 
@@ -156,16 +115,16 @@ class UserController extends Controller
         $user->update($data);
 
         return redirect()
-            ->route('users.index')
+            ->route('admin.users.index')
             ->with('success_title', 'User berhasil diperbarui')
-            ->with('success_message', 'Akun "' . $user->name . '" berhasil diperbarui.');
+            ->with('success_message', 'Data akun "' . $user->name . '" berhasil diperbarui.');
     }
 
     public function destroy(User $user)
     {
         if ($user->id === auth()->id()) {
             return redirect()
-                ->route('users.index')
+                ->route('admin.users.index')
                 ->with('error_title', 'User tidak bisa dihapus')
                 ->with('error_message', 'Anda tidak bisa menghapus akun yang sedang digunakan.');
         }
@@ -175,7 +134,7 @@ class UserController extends Controller
         $user->delete();
 
         return redirect()
-            ->route('users.index')
+            ->route('admin.users.index')
             ->with('success_title', 'User berhasil dihapus')
             ->with('success_message', 'Akun "' . $name . '" berhasil dihapus dari sistem.');
     }

@@ -1,25 +1,119 @@
 @php
-    $classesData = $classes->groupBy('level')->map(function ($group) {
-        return $group->map(function ($class) {
-            return [
-                'id' => $class->id,
-                'class_name' => $class->class_name,
-                'level' => $class->level,
-                'academic_year' => $class->academic_year,
-            ];
-        })->values();
-    });
+$normalizeLevel = function ($level) {
+$value = strtoupper(trim((string) $level));
 
-    $allClasses = $classes->map(function ($class) {
-        return [
-            'id' => $class->id,
-            'class_name' => $class->class_name,
-            'level' => $class->level,
-            'academic_year' => $class->academic_year,
-        ];
-    })->values();
+$romanMap = [
+'I' => '1',
+'II' => '2',
+'III' => '3',
+'IV' => '4',
+'V' => '5',
+'VI' => '6',
+'VII' => '7',
+'VIII' => '8',
+'IX' => '9',
+'X' => '10',
+'XI' => '11',
+'XII' => '12',
+];
 
-    $oldBulkRows = old('members', []);
+if (isset($romanMap[$value])) {
+return $romanMap[$value];
+}
+
+if (preg_match('/\d+/', $value, $matches)) {
+return (string) ((int) $matches[0]);
+}
+
+return $value;
+};
+
+$levelLabel = function ($level) {
+$romanMap = [
+'1' => 'I',
+'2' => 'II',
+'3' => 'III',
+'4' => 'IV',
+'5' => 'V',
+'6' => 'VI',
+'7' => 'VII',
+'8' => 'VIII',
+'9' => 'IX',
+'10' => 'X',
+'11' => 'XI',
+'12' => 'XII',
+];
+
+$key = (string) $level;
+
+return $romanMap[$key] ?? $key;
+};
+
+$classesData = $classes
+->map(function ($class) use ($normalizeLevel, $levelLabel) {
+$levelKey = $normalizeLevel($class->level);
+
+return [
+'id' => $class->id,
+'class_name' => $class->class_name,
+'level' => $class->level,
+'level_key' => $levelKey,
+'level_label' => $levelLabel($levelKey),
+'academic_year' => $class->academic_year,
+];
+})
+->groupBy('level_key')
+->sortKeys()
+->map(function ($group) {
+return $group
+->sortBy([
+['class_name', 'asc'],
+['academic_year', 'asc'],
+])
+->values();
+});
+
+$levelOptions = $classesData
+->keys()
+->map(function ($level) use ($levelLabel) {
+return [
+'value' => (string) $level,
+'label' => 'Kelas ' . $levelLabel($level),
+];
+})
+->values();
+
+$allClasses = $classes
+->map(function ($class) use ($normalizeLevel, $levelLabel) {
+$levelKey = $normalizeLevel($class->level);
+
+return [
+'id' => $class->id,
+'class_name' => $class->class_name,
+'level' => $class->level,
+'level_key' => $levelKey,
+'level_label' => $levelLabel($levelKey),
+'academic_year' => $class->academic_year,
+];
+})
+->sortBy([
+['level_key', 'asc'],
+['class_name', 'asc'],
+['academic_year', 'asc'],
+])
+->values();
+
+$oldBulkRows = old('members', []);
+$oldSelectedClassId = (string) old('student_class_id', '');
+$oldSelectedLevel = $normalizeLevel(old('level_selector', ''));
+
+if (!$oldSelectedLevel && $oldSelectedClassId) {
+$selectedClass = $classes->firstWhere('id', $oldSelectedClassId);
+
+if ($selectedClass) {
+$oldSelectedLevel = $normalizeLevel($selectedClass->level);
+}
+}
 @endphp
 
 <x-app-layout>
@@ -41,14 +135,13 @@
                 <button
                     type="button"
                     onclick="window.dispatchEvent(new CustomEvent('open-bulk-member-modal'))"
-                    class="inline-flex items-center justify-center gap-2 rounded-2xl bg-emerald-700 px-5 py-3 text-sm font-semibold text-white shadow-sm transition hover:bg-emerald-800"
-                >
+                    class="inline-flex items-center justify-center gap-2 rounded-2xl bg-emerald-700 px-5 py-3 text-sm font-semibold text-white shadow-sm transition hover:bg-emerald-800">
                     <span class="material-symbols-outlined text-[18px]">group_add</span>
                     Tambah Banyak Anggota
                 </button>
 
                 <a href="{{ route('members.index') }}"
-                   class="inline-flex items-center justify-center gap-2 rounded-2xl border border-emerald-200 bg-white px-5 py-3 text-sm font-semibold text-emerald-700 shadow-sm transition hover:bg-emerald-50">
+                    class="inline-flex items-center justify-center gap-2 rounded-2xl border border-emerald-200 bg-white px-5 py-3 text-sm font-semibold text-emerald-700 shadow-sm transition hover:bg-emerald-50">
                     <span class="material-symbols-outlined text-[18px]">arrow_back</span>
                     Kembali
                 </a>
@@ -60,23 +153,21 @@
         class="py-10 bg-gradient-to-br from-slate-50 via-emerald-50/40 to-sky-50/40 min-h-screen"
         x-data="memberCreateForm(@js($oldBulkRows), @js($errors->any()))"
         @open-bulk-member-modal.window="openBulkModal()"
-        @keydown.escape.window="showBulkModal = false"
-    >
+        @keydown.escape.window="showBulkModal = false">
         <div class="max-w-5xl mx-auto sm:px-6 lg:px-8">
 
             @if ($errors->any() && empty($oldBulkRows))
-                <div class="mb-5 rounded-2xl border border-red-200 bg-red-50 p-4 text-sm text-red-700 shadow-sm">
-                    <div class="font-bold mb-2">Data anggota belum bisa disimpan:</div>
-                    <ul class="list-disc list-inside space-y-1">
-                        @foreach ($errors->all() as $error)
-                            <li>{{ $error }}</li>
-                        @endforeach
-                    </ul>
-                </div>
+            <div class="mb-5 rounded-2xl border border-red-200 bg-red-50 p-4 text-sm text-red-700 shadow-sm">
+                <div class="font-bold mb-2">Data anggota belum bisa disimpan:</div>
+                <ul class="list-disc list-inside space-y-1">
+                    @foreach ($errors->all() as $error)
+                    <li>{{ $error }}</li>
+                    @endforeach
+                </ul>
+            </div>
             @endif
 
             <div class="overflow-hidden rounded-[2rem] border border-white/70 bg-white/75 backdrop-blur-xl shadow-[0_20px_60px_rgba(15,23,42,0.08)]">
-
                 <div class="relative overflow-hidden bg-gradient-to-r from-emerald-700 to-teal-500 p-6 text-white">
                     <div class="absolute -right-16 -top-20 h-52 w-52 rounded-full bg-white/10 blur-2xl"></div>
                     <div class="absolute -left-20 bottom-0 h-48 w-48 rounded-full bg-emerald-200/20 blur-2xl"></div>
@@ -132,11 +223,10 @@
                                         value="{{ old('nis_nip') }}"
                                         required
                                         placeholder="Masukkan nomor identitas..."
-                                        class="mt-2 block w-full rounded-2xl border border-emerald-200 bg-white px-4 py-3 text-sm text-gray-900 shadow-sm transition focus:border-emerald-500 focus:ring-2 focus:ring-emerald-200"
-                                    >
+                                        class="mt-2 block w-full rounded-2xl border border-emerald-200 bg-white px-4 py-3 text-sm text-gray-900 shadow-sm transition focus:border-emerald-500 focus:ring-2 focus:ring-emerald-200">
 
                                     @error('nis_nip')
-                                        <p class="mt-2 text-xs font-medium text-red-600">{{ $message }}</p>
+                                    <p class="mt-2 text-xs font-medium text-red-600">{{ $message }}</p>
                                     @enderror
                                 </div>
 
@@ -152,11 +242,10 @@
                                         value="{{ old('name') }}"
                                         required
                                         placeholder="Nama sesuai identitas..."
-                                        class="mt-2 block w-full rounded-2xl border border-emerald-200 bg-white px-4 py-3 text-sm text-gray-900 shadow-sm transition focus:border-emerald-500 focus:ring-2 focus:ring-emerald-200"
-                                    >
+                                        class="mt-2 block w-full rounded-2xl border border-emerald-200 bg-white px-4 py-3 text-sm text-gray-900 shadow-sm transition focus:border-emerald-500 focus:ring-2 focus:ring-emerald-200">
 
                                     @error('name')
-                                        <p class="mt-2 text-xs font-medium text-red-600">{{ $message }}</p>
+                                    <p class="mt-2 text-xs font-medium text-red-600">{{ $message }}</p>
                                     @enderror
                                 </div>
                             </div>
@@ -191,8 +280,7 @@
                                             x-model="memberType"
                                             @change="handleMemberTypeChange()"
                                             required
-                                            class="block w-full appearance-none rounded-2xl border border-emerald-200 bg-emerald-50/60 px-4 py-3 pr-10 text-sm text-gray-900 shadow-sm transition focus:border-emerald-500 focus:ring-2 focus:ring-emerald-200"
-                                        >
+                                            class="block w-full appearance-none rounded-2xl border border-emerald-200 bg-emerald-50/60 px-4 py-3 pr-10 text-sm text-gray-900 shadow-sm transition focus:border-emerald-500 focus:ring-2 focus:ring-emerald-200">
                                             <option value="">Pilih Jenis Anggota</option>
                                             <option value="siswa">Siswa</option>
                                             <option value="guru">Guru</option>
@@ -204,7 +292,7 @@
                                     </div>
 
                                     @error('member_type')
-                                        <p class="mt-2 text-xs font-medium text-red-600">{{ $message }}</p>
+                                    <p class="mt-2 text-xs font-medium text-red-600">{{ $message }}</p>
                                     @enderror
                                 </div>
 
@@ -218,8 +306,7 @@
                                             id="gender"
                                             name="gender"
                                             required
-                                            class="block w-full appearance-none rounded-2xl border border-emerald-200 bg-emerald-50/60 px-4 py-3 pr-10 text-sm text-gray-900 shadow-sm transition focus:border-emerald-500 focus:ring-2 focus:ring-emerald-200"
-                                        >
+                                            class="block w-full appearance-none rounded-2xl border border-emerald-200 bg-emerald-50/60 px-4 py-3 pr-10 text-sm text-gray-900 shadow-sm transition focus:border-emerald-500 focus:ring-2 focus:ring-emerald-200">
                                             <option value="">Pilih Jenis Kelamin</option>
                                             <option value="laki-laki" {{ old('gender') == 'laki-laki' ? 'selected' : '' }}>Laki-laki</option>
                                             <option value="perempuan" {{ old('gender') == 'perempuan' ? 'selected' : '' }}>Perempuan</option>
@@ -231,7 +318,7 @@
                                     </div>
 
                                     @error('gender')
-                                        <p class="mt-2 text-xs font-medium text-red-600">{{ $message }}</p>
+                                    <p class="mt-2 text-xs font-medium text-red-600">{{ $message }}</p>
                                     @enderror
                                 </div>
                             </div>
@@ -241,8 +328,7 @@
                             x-show="memberType === 'siswa'"
                             x-transition
                             class="rounded-3xl border border-emerald-100 bg-emerald-50/50 p-5 md:p-6"
-                            style="display: none;"
-                        >
+                            style="display: none;">
                             <div class="mb-5 flex items-start gap-3">
                                 <div class="flex h-9 w-9 items-center justify-center rounded-xl bg-emerald-100 text-emerald-700">
                                     <span class="material-symbols-outlined text-[20px]">school</span>
@@ -253,7 +339,7 @@
                                         Data Kelas Siswa
                                     </h4>
                                     <p class="mt-1 text-sm text-gray-500">
-                                        Pilih tingkat dan rombel siswa. Bagian ini hanya berlaku untuk anggota siswa.
+                                        Pilihan tingkat sudah disatukan. Data seperti 7 dan VII akan tampil sebagai satu tingkat yang sama.
                                     </p>
                                 </div>
                             </div>
@@ -272,11 +358,10 @@
                                             x-model="selectedLevel"
                                             @change="selectedClassId = ''"
                                             :required="memberType === 'siswa'"
-                                            class="block w-full appearance-none rounded-2xl border border-emerald-200 bg-white px-4 py-3 pr-10 text-sm text-gray-900 shadow-sm transition focus:border-emerald-500 focus:ring-2 focus:ring-emerald-200"
-                                        >
+                                            class="block w-full appearance-none rounded-2xl border border-emerald-200 bg-white px-4 py-3 pr-10 text-sm text-gray-900 shadow-sm transition focus:border-emerald-500 focus:ring-2 focus:ring-emerald-200">
                                             <option value="">Pilih Tingkat</option>
-                                            <template x-for="(group, level) in classesData" :key="level">
-                                                <option :value="level" x-text="'Kelas ' + level"></option>
+                                            <template x-for="level in levelOptions" :key="level.value">
+                                                <option :value="level.value" x-text="level.label"></option>
                                             </template>
                                         </select>
 
@@ -298,8 +383,7 @@
                                             x-model="selectedClassId"
                                             :disabled="!selectedLevel"
                                             :required="memberType === 'siswa'"
-                                            class="block w-full appearance-none rounded-2xl border border-emerald-200 bg-white px-4 py-3 pr-10 text-sm text-gray-900 shadow-sm transition focus:border-emerald-500 focus:ring-2 focus:ring-emerald-200 disabled:cursor-not-allowed disabled:bg-gray-100 disabled:text-gray-400"
-                                        >
+                                            class="block w-full appearance-none rounded-2xl border border-emerald-200 bg-white px-4 py-3 pr-10 text-sm text-gray-900 shadow-sm transition focus:border-emerald-500 focus:ring-2 focus:ring-emerald-200 disabled:cursor-not-allowed disabled:bg-gray-100 disabled:text-gray-400">
                                             <option value="">Pilih Rombel</option>
                                             <template x-for="cls in filteredClasses" :key="cls.id">
                                                 <option :value="String(cls.id)" x-text="cls.class_name + ' - ' + cls.academic_year"></option>
@@ -312,7 +396,7 @@
                                     </div>
 
                                     @error('student_class_id')
-                                        <p class="mt-2 text-xs font-medium text-red-600">{{ $message }}</p>
+                                    <p class="mt-2 text-xs font-medium text-red-600">{{ $message }}</p>
                                     @enderror
                                 </div>
                             </div>
@@ -346,11 +430,10 @@
                                         type="text"
                                         value="{{ old('phone') }}"
                                         placeholder="Contoh: 08123456789"
-                                        class="mt-2 block w-full rounded-2xl border border-emerald-200 bg-white px-4 py-3 text-sm text-gray-900 shadow-sm transition focus:border-emerald-500 focus:ring-2 focus:ring-emerald-200"
-                                    >
+                                        class="mt-2 block w-full rounded-2xl border border-emerald-200 bg-white px-4 py-3 text-sm text-gray-900 shadow-sm transition focus:border-emerald-500 focus:ring-2 focus:ring-emerald-200">
 
                                     @error('phone')
-                                        <p class="mt-2 text-xs font-medium text-red-600">{{ $message }}</p>
+                                    <p class="mt-2 text-xs font-medium text-red-600">{{ $message }}</p>
                                     @enderror
                                 </div>
 
@@ -364,8 +447,7 @@
                                             id="status"
                                             name="status"
                                             required
-                                            class="block w-full appearance-none rounded-2xl border border-emerald-200 bg-emerald-50/60 px-4 py-3 pr-10 text-sm text-gray-900 shadow-sm transition focus:border-emerald-500 focus:ring-2 focus:ring-emerald-200"
-                                        >
+                                            class="block w-full appearance-none rounded-2xl border border-emerald-200 bg-emerald-50/60 px-4 py-3 pr-10 text-sm text-gray-900 shadow-sm transition focus:border-emerald-500 focus:ring-2 focus:ring-emerald-200">
                                             <option value="aktif" {{ old('status', 'aktif') == 'aktif' ? 'selected' : '' }}>Aktif</option>
                                             <option value="nonaktif" {{ old('status') == 'nonaktif' ? 'selected' : '' }}>Nonaktif</option>
                                         </select>
@@ -376,7 +458,7 @@
                                     </div>
 
                                     @error('status')
-                                        <p class="mt-2 text-xs font-medium text-red-600">{{ $message }}</p>
+                                    <p class="mt-2 text-xs font-medium text-red-600">{{ $message }}</p>
                                     @enderror
                                 </div>
 
@@ -390,15 +472,14 @@
                                         name="card_image"
                                         type="file"
                                         accept="image/png,image/jpeg,image/jpg,image/webp"
-                                        class="mt-2 block w-full rounded-2xl border border-emerald-200 bg-white px-4 py-3 text-sm text-gray-900 shadow-sm file:mr-4 file:rounded-xl file:border-0 file:bg-emerald-50 file:px-4 file:py-2 file:text-sm file:font-bold file:text-emerald-700 hover:file:bg-emerald-100 focus:border-emerald-500 focus:ring-2 focus:ring-emerald-200"
-                                    >
+                                        class="mt-2 block w-full rounded-2xl border border-emerald-200 bg-white px-4 py-3 text-sm text-gray-900 shadow-sm file:mr-4 file:rounded-xl file:border-0 file:bg-emerald-50 file:px-4 file:py-2 file:text-sm file:font-bold file:text-emerald-700 hover:file:bg-emerald-100 focus:border-emerald-500 focus:ring-2 focus:ring-emerald-200">
 
                                     <p class="mt-2 text-xs text-gray-500">
                                         Opsional. Format yang didukung: JPG, JPEG, PNG, WEBP. Maksimal 2MB.
                                     </p>
 
                                     @error('card_image')
-                                        <p class="mt-2 text-xs font-medium text-red-600">{{ $message }}</p>
+                                    <p class="mt-2 text-xs font-medium text-red-600">{{ $message }}</p>
                                     @enderror
                                 </div>
                             </div>
@@ -406,12 +487,12 @@
 
                         <div class="flex flex-col-reverse gap-3 border-t border-gray-100 pt-6 sm:flex-row sm:items-center sm:justify-end">
                             <a href="{{ route('members.index') }}"
-                               class="inline-flex items-center justify-center rounded-2xl border border-gray-200 bg-white px-6 py-3 text-sm font-bold text-gray-600 transition hover:bg-gray-50">
+                                class="inline-flex items-center justify-center rounded-2xl border border-gray-200 bg-white px-6 py-3 text-sm font-bold text-gray-600 transition hover:bg-gray-50">
                                 Batal
                             </a>
 
                             <button type="submit"
-                                    class="inline-flex items-center justify-center gap-2 rounded-2xl bg-emerald-700 px-6 py-3 text-sm font-bold text-white shadow-lg shadow-emerald-700/20 transition hover:bg-emerald-800 focus:outline-none focus:ring-2 focus:ring-emerald-300">
+                                class="inline-flex items-center justify-center gap-2 rounded-2xl bg-emerald-700 px-6 py-3 text-sm font-bold text-white shadow-lg shadow-emerald-700/20 transition hover:bg-emerald-800 focus:outline-none focus:ring-2 focus:ring-emerald-300">
                                 <span>Simpan Anggota</span>
                                 <span class="material-symbols-outlined text-[18px]">save</span>
                             </button>
@@ -426,12 +507,10 @@
             x-show="showBulkModal"
             x-cloak
             x-transition.opacity
-            class="fixed inset-0 z-50 overflow-y-auto px-4 py-6"
-        >
+            class="fixed inset-0 z-50 overflow-y-auto px-4 py-6">
             <div
                 class="fixed inset-0 bg-slate-900/60 backdrop-blur-md"
-                @click="showBulkModal = false"
-            ></div>
+                @click="showBulkModal = false"></div>
 
             <div class="relative z-10 flex min-h-full items-start justify-center py-6">
                 <div
@@ -442,8 +521,7 @@
                     x-transition:leave="transition ease-in duration-150"
                     x-transition:leave-start="opacity-100 scale-100 translate-y-0"
                     x-transition:leave-end="opacity-0 scale-95 translate-y-3"
-                    class="flex max-h-[88vh] w-full max-w-7xl flex-col overflow-hidden rounded-[2rem] border border-white/70 bg-white shadow-2xl"
-                >
+                    class="flex max-h-[88vh] w-full max-w-7xl flex-col overflow-hidden rounded-[2rem] border border-white/70 bg-white shadow-2xl">
                     <div class="flex shrink-0 items-center justify-between border-b border-gray-100 bg-gradient-to-r from-emerald-700 to-teal-500 px-6 py-5 text-white">
                         <div>
                             <p class="text-xs font-bold uppercase tracking-[0.18em] text-emerald-50">
@@ -460,8 +538,7 @@
                         <button
                             type="button"
                             @click="showBulkModal = false"
-                            class="flex h-10 w-10 items-center justify-center rounded-full bg-white/15 text-white transition hover:bg-white/25"
-                        >
+                            class="flex h-10 w-10 items-center justify-center rounded-full bg-white/15 text-white transition hover:bg-white/25">
                             <span class="material-symbols-outlined text-[20px]">close</span>
                         </button>
                     </div>
@@ -471,14 +548,14 @@
 
                         <div class="flex-1 space-y-5 overflow-y-auto p-6">
                             @if($errors->any() && !empty($oldBulkRows))
-                                <div class="rounded-2xl border border-red-200 bg-red-50 p-4 text-red-700">
-                                    <p class="text-sm font-bold">Data anggota belum bisa disimpan</p>
-                                    <ul class="mt-2 list-disc space-y-1 pl-5 text-sm">
-                                        @foreach($errors->all() as $error)
-                                            <li>{{ $error }}</li>
-                                        @endforeach
-                                    </ul>
-                                </div>
+                            <div class="rounded-2xl border border-red-200 bg-red-50 p-4 text-red-700">
+                                <p class="text-sm font-bold">Data anggota belum bisa disimpan</p>
+                                <ul class="mt-2 list-disc space-y-1 pl-5 text-sm">
+                                    @foreach($errors->all() as $error)
+                                    <li>{{ $error }}</li>
+                                    @endforeach
+                                </ul>
+                            </div>
                             @endif
 
                             <div class="rounded-3xl border border-emerald-100 bg-emerald-50/60 p-5">
@@ -503,15 +580,13 @@
                                             min="1"
                                             max="50"
                                             x-model.number="entryCount"
-                                            class="mt-2 block w-full rounded-2xl border border-emerald-200 bg-white px-4 py-3 text-sm text-gray-900 shadow-sm transition focus:border-emerald-500 focus:ring-2 focus:ring-emerald-200"
-                                        >
+                                            class="mt-2 block w-full rounded-2xl border border-emerald-200 bg-white px-4 py-3 text-sm text-gray-900 shadow-sm transition focus:border-emerald-500 focus:ring-2 focus:ring-emerald-200">
                                     </div>
 
                                     <button
                                         type="button"
                                         @click="generateBulkRows()"
-                                        class="inline-flex items-center justify-center gap-2 rounded-2xl bg-emerald-700 px-5 py-3 text-sm font-bold text-white transition hover:bg-emerald-800"
-                                    >
+                                        class="inline-flex items-center justify-center gap-2 rounded-2xl bg-emerald-700 px-5 py-3 text-sm font-bold text-white transition hover:bg-emerald-800">
                                         <span class="material-symbols-outlined text-[18px]">table_rows</span>
                                         Buat Baris
                                     </button>
@@ -548,9 +623,8 @@
                                                         type="text"
                                                         :name="`members[${index}][nis_nip]`"
                                                         x-model="row.nis_nip"
-                                                        required
-                                                        class="block w-full rounded-2xl border border-gray-200 px-4 py-3 text-sm focus:border-emerald-500 focus:ring-2 focus:ring-emerald-200"
-                                                    >
+                                                        :required="isBulkRowUsed(row)"
+                                                        class="block w-full rounded-2xl border border-gray-200 px-4 py-3 text-sm focus:border-emerald-500 focus:ring-2 focus:ring-emerald-200">
                                                 </td>
 
                                                 <td class="px-4 py-4">
@@ -558,9 +632,8 @@
                                                         type="text"
                                                         :name="`members[${index}][name]`"
                                                         x-model="row.name"
-                                                        required
-                                                        class="block w-full rounded-2xl border border-gray-200 px-4 py-3 text-sm focus:border-emerald-500 focus:ring-2 focus:ring-emerald-200"
-                                                    >
+                                                        :required="isBulkRowUsed(row)"
+                                                        class="block w-full rounded-2xl border border-gray-200 px-4 py-3 text-sm focus:border-emerald-500 focus:ring-2 focus:ring-emerald-200">
                                                 </td>
 
                                                 <td class="px-4 py-4">
@@ -568,9 +641,8 @@
                                                         :name="`members[${index}][member_type]`"
                                                         x-model="row.member_type"
                                                         @change="handleBulkMemberTypeChange(row)"
-                                                        required
-                                                        class="block w-full rounded-2xl border border-gray-200 px-4 py-3 text-sm focus:border-emerald-500 focus:ring-2 focus:ring-emerald-200"
-                                                    >
+                                                        :required="isBulkRowUsed(row)"
+                                                        class="block w-full rounded-2xl border border-gray-200 px-4 py-3 text-sm focus:border-emerald-500 focus:ring-2 focus:ring-emerald-200">
                                                         <option value="siswa">Siswa</option>
                                                         <option value="guru">Guru</option>
                                                     </select>
@@ -580,9 +652,8 @@
                                                     <select
                                                         :name="`members[${index}][gender]`"
                                                         x-model="row.gender"
-                                                        required
-                                                        class="block w-full rounded-2xl border border-gray-200 px-4 py-3 text-sm focus:border-emerald-500 focus:ring-2 focus:ring-emerald-200"
-                                                    >
+                                                        :required="isBulkRowUsed(row)"
+                                                        class="block w-full rounded-2xl border border-gray-200 px-4 py-3 text-sm focus:border-emerald-500 focus:ring-2 focus:ring-emerald-200">
                                                         <option value="">Pilih</option>
                                                         <option value="laki-laki">Laki-laki</option>
                                                         <option value="perempuan">Perempuan</option>
@@ -593,13 +664,12 @@
                                                     <select
                                                         :name="`members[${index}][student_class_id]`"
                                                         x-model="row.student_class_id"
-                                                        :required="row.member_type === 'siswa'"
+                                                        :required="row.member_type === 'siswa' && isBulkRowUsed(row)"
                                                         :disabled="row.member_type !== 'siswa'"
-                                                        class="block w-full rounded-2xl border border-gray-200 px-4 py-3 text-sm disabled:cursor-not-allowed disabled:bg-gray-100 disabled:text-gray-400 focus:border-emerald-500 focus:ring-2 focus:ring-emerald-200"
-                                                    >
+                                                        class="block w-full rounded-2xl border border-gray-200 px-4 py-3 text-sm disabled:cursor-not-allowed disabled:bg-gray-100 disabled:text-gray-400 focus:border-emerald-500 focus:ring-2 focus:ring-emerald-200">
                                                         <option value="">Pilih Kelas</option>
                                                         <template x-for="cls in allClasses" :key="cls.id">
-                                                            <option :value="String(cls.id)" x-text="cls.class_name + ' - ' + cls.academic_year"></option>
+                                                            <option :value="String(cls.id)" x-text="'Kelas ' + cls.level_label + ' - ' + cls.class_name + ' - ' + cls.academic_year"></option>
                                                         </template>
                                                     </select>
                                                 </td>
@@ -609,17 +679,15 @@
                                                         type="text"
                                                         :name="`members[${index}][phone]`"
                                                         x-model="row.phone"
-                                                        class="block w-full rounded-2xl border border-gray-200 px-4 py-3 text-sm focus:border-emerald-500 focus:ring-2 focus:ring-emerald-200"
-                                                    >
+                                                        class="block w-full rounded-2xl border border-gray-200 px-4 py-3 text-sm focus:border-emerald-500 focus:ring-2 focus:ring-emerald-200">
                                                 </td>
 
                                                 <td class="px-4 py-4">
                                                     <select
                                                         :name="`members[${index}][status]`"
                                                         x-model="row.status"
-                                                        required
-                                                        class="block w-full rounded-2xl border border-gray-200 px-4 py-3 text-sm focus:border-emerald-500 focus:ring-2 focus:ring-emerald-200"
-                                                    >
+                                                        :required="isBulkRowUsed(row)"
+                                                        class="block w-full rounded-2xl border border-gray-200 px-4 py-3 text-sm focus:border-emerald-500 focus:ring-2 focus:ring-emerald-200">
                                                         <option value="aktif">Aktif</option>
                                                         <option value="nonaktif">Nonaktif</option>
                                                     </select>
@@ -630,8 +698,7 @@
                                                         type="button"
                                                         @click="removeBulkRow(index)"
                                                         x-show="bulkRows.length > 1"
-                                                        class="inline-flex h-9 w-9 items-center justify-center rounded-full border border-red-200 bg-red-50 text-red-600 transition hover:bg-red-100"
-                                                    >
+                                                        class="inline-flex h-9 w-9 items-center justify-center rounded-full border border-red-200 bg-red-50 text-red-600 transition hover:bg-red-100">
                                                         <span class="material-symbols-outlined text-[18px]">close</span>
                                                     </button>
                                                 </td>
@@ -652,15 +719,13 @@
                             <button
                                 type="button"
                                 @click="showBulkModal = false"
-                                class="inline-flex items-center justify-center rounded-2xl border border-gray-200 bg-white px-5 py-3 text-sm font-bold text-gray-600 transition hover:bg-gray-50"
-                            >
+                                class="inline-flex items-center justify-center rounded-2xl border border-gray-200 bg-white px-5 py-3 text-sm font-bold text-gray-600 transition hover:bg-gray-50">
                                 Batal
                             </button>
 
                             <button
                                 type="submit"
-                                class="inline-flex items-center justify-center gap-2 rounded-2xl bg-emerald-700 px-6 py-3 text-sm font-bold text-white shadow-lg shadow-emerald-700/20 transition hover:bg-emerald-800"
-                            >
+                                class="inline-flex items-center justify-center gap-2 rounded-2xl bg-emerald-700 px-6 py-3 text-sm font-bold text-white shadow-lg shadow-emerald-700/20 transition hover:bg-emerald-800">
                                 <span>Simpan Semua Anggota</span>
                                 <span class="material-symbols-outlined text-[18px]">save</span>
                             </button>
@@ -677,87 +742,98 @@
         </style>
 
         <script>
-            function memberCreateForm(oldBulkRows = [], hasErrors = false) {
-                return {
-                    memberType: @js(old('member_type', '')),
-                    selectedLevel: @js(old('level_selector', '')),
-                    selectedClassId: @js((string) old('student_class_id', '')),
-                    classesData: @js($classesData),
-                    allClasses: @js($allClasses),
+    function memberCreateForm(oldBulkRows = [], hasErrors = false) {
+        return {
+            memberType: @js(old('member_type', '')),
+            selectedLevel: @js($oldSelectedLevel),
+            selectedClassId: @js($oldSelectedClassId),
+            classesData: @js($classesData),
+            levelOptions: @js($levelOptions),
+            allClasses: @js($allClasses),
 
-                    showBulkModal: oldBulkRows.length > 0 && hasErrors,
-                    entryCount: oldBulkRows.length > 0 ? oldBulkRows.length : 1,
-                    bulkRows: oldBulkRows.length > 0 ? oldBulkRows : [
-                        {
-                            nis_nip: '',
-                            name: '',
-                            member_type: 'siswa',
-                            gender: '',
-                            student_class_id: '',
-                            phone: '',
-                            status: 'aktif',
-                        }
-                    ],
+            showBulkModal: oldBulkRows.length > 0 && hasErrors,
+            entryCount: oldBulkRows.length > 0 ? oldBulkRows.length : 1,
+            bulkRows: oldBulkRows.length > 0 ? oldBulkRows : [
+                {
+                    nis_nip: '',
+                    name: '',
+                    member_type: 'siswa',
+                    gender: '',
+                    student_class_id: '',
+                    phone: '',
+                    status: 'aktif',
+                }
+            ],
 
-                    get filteredClasses() {
-                        if (!this.selectedLevel || !this.classesData[this.selectedLevel]) {
-                            return [];
-                        }
+            get filteredClasses() {
+                if (!this.selectedLevel || !this.classesData[this.selectedLevel]) {
+                    return [];
+                }
 
-                        return this.classesData[this.selectedLevel];
-                    },
+                return this.classesData[this.selectedLevel];
+            },
 
-                    handleMemberTypeChange() {
-                        if (this.memberType === 'guru') {
-                            this.selectedLevel = '';
-                            this.selectedClassId = '';
-                        }
-                    },
+            handleMemberTypeChange() {
+                if (this.memberType === 'guru') {
+                    this.selectedLevel = '';
+                    this.selectedClassId = '';
+                }
+            },
 
-                    openBulkModal() {
-                        this.showBulkModal = true;
+            openBulkModal() {
+                this.showBulkModal = true;
 
-                        if (!this.bulkRows.length) {
-                            this.generateBulkRows();
-                        }
-                    },
+                if (!this.bulkRows.length) {
+                    this.generateBulkRows();
+                }
+            },
 
-                    generateBulkRows() {
-                        let count = parseInt(this.entryCount || 1);
+            generateBulkRows() {
+                let count = parseInt(this.entryCount || 1);
 
-                        if (count < 1) {
-                            count = 1;
-                        }
+                if (count < 1) {
+                    count = 1;
+                }
 
-                        if (count > 50) {
-                            count = 50;
-                        }
+                if (count > 50) {
+                    count = 50;
+                }
 
-                        this.entryCount = count;
+                this.entryCount = count;
 
-                        this.bulkRows = Array.from({ length: count }, () => ({
-                            nis_nip: '',
-                            name: '',
-                            member_type: 'siswa',
-                            gender: '',
-                            student_class_id: '',
-                            phone: '',
-                            status: 'aktif',
-                        }));
-                    },
+                this.bulkRows = Array.from({ length: count }, () => ({
+                    nis_nip: '',
+                    name: '',
+                    member_type: 'siswa',
+                    gender: '',
+                    student_class_id: '',
+                    phone: '',
+                    status: 'aktif',
+                }));
+            },
 
-                    removeBulkRow(index) {
-                        this.bulkRows.splice(index, 1);
-                        this.entryCount = this.bulkRows.length;
-                    },
+            removeBulkRow(index) {
+                this.bulkRows.splice(index, 1);
+                this.entryCount = this.bulkRows.length;
+            },
 
-                    handleBulkMemberTypeChange(row) {
-                        if (row.member_type === 'guru') {
-                            row.student_class_id = '';
-                        }
-                    },
-                };
-            }
-        </script>
+            isBulkRowUsed(row) {
+                return Boolean(
+                    (row.nis_nip && row.nis_nip.trim() !== '') ||
+                    (row.name && row.name.trim() !== '') ||
+                    (row.gender && row.gender.trim() !== '') ||
+                    (row.student_class_id && String(row.student_class_id).trim() !== '') ||
+                    (row.phone && row.phone.trim() !== '')
+                );
+            },
+
+            handleBulkMemberTypeChange(row) {
+                if (row.member_type === 'guru') {
+                    row.student_class_id = '';
+                }
+            },
+        };
+    }
+</script>
     </div>
 </x-app-layout>

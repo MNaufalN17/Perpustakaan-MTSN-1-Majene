@@ -25,11 +25,14 @@
         $today = \Carbon\Carbon::today()->startOfDay();
         $dueDate = \Carbon\Carbon::parse($loan->due_date)->startOfDay();
 
+        $schoolName = \App\Models\SystemSetting::getValue('school_name', 'MTsN 1 Majene');
+        $libraryName = \App\Models\SystemSetting::getValue('library_name', 'SIM Perpustakaan');
+        $finePerDay = \App\Models\SystemSetting::intValue('fine_per_day', 500);
+
         $isActiveLoan = in_array($loan->status, ['aktif', 'terlambat']);
         $isOverdue = $isActiveLoan && $today->gt($dueDate);
 
         $lateDays = $isOverdue ? (int) $dueDate->diffInDays($today) : 0;
-        $finePerDay = 500;
 
         $activeItemCount = $loan->loanItems
             ->whereIn('status', ['dipinjam', 'terlambat'])
@@ -49,7 +52,6 @@
 
             <div id="print-area" class="overflow-hidden rounded-[2rem] border border-white/70 bg-white shadow-[0_20px_60px_rgba(15,23,42,0.08)]">
 
-                {{-- Header Struk --}}
                 <div class="relative overflow-hidden bg-gradient-to-r from-emerald-700 to-teal-500 p-6 text-white">
                     <div class="absolute -right-16 -top-20 h-52 w-52 rounded-full bg-white/10 blur-2xl"></div>
                     <div class="absolute -left-20 bottom-0 h-48 w-48 rounded-full bg-emerald-200/20 blur-2xl"></div>
@@ -64,10 +66,10 @@
 
                             <div>
                                 <p class="text-xs font-bold uppercase tracking-[0.18em] text-emerald-50">
-                                    SIM Perpustakaan
+                                    {{ $libraryName }}
                                 </p>
                                 <h3 class="mt-2 text-2xl font-bold leading-tight text-white">
-                                    MTsN 1 Majene
+                                    {{ $schoolName }}
                                 </h3>
                                 <p class="mt-2 text-sm text-emerald-50">
                                     Struk transaksi peminjaman dan pengembalian buku.
@@ -86,7 +88,6 @@
 
                 <div class="p-6 md:p-8 space-y-8">
 
-                    {{-- Ringkasan Transaksi --}}
                     <section class="grid gap-5 md:grid-cols-2">
                         <div class="rounded-3xl border border-emerald-100 bg-emerald-50/60 p-5">
                             <p class="text-xs font-bold uppercase tracking-[0.14em] text-emerald-700">
@@ -158,7 +159,6 @@
                         </div>
                     </section>
 
-                    {{-- Detail Buku --}}
                     <section class="rounded-3xl border border-gray-100 bg-white p-5 md:p-6 shadow-sm">
                         <div class="mb-5 flex items-start gap-3">
                             <div class="flex h-9 w-9 items-center justify-center rounded-xl bg-emerald-100 text-emerald-700">
@@ -219,41 +219,61 @@
                                             </td>
 
                                             <td class="px-5 py-4">
-                                                <span class="inline-flex rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-xs font-bold capitalize text-emerald-700">
-                                                    {{ $item->return_condition ?? $item->bookItem->condition ?? '-' }}
-                                                </span>
-                                            </td>
+                                                @php
+                                                    $condition = strtolower($item->return_condition ?? $item->condition ?? $item->bookItem->condition ?? '-');
+                                                @endphp
 
-                                            <td class="px-5 py-4">
-                                                @if($item->status === 'dipinjam')
-                                                    <span class="inline-flex rounded-full border border-amber-200 bg-amber-50 px-3 py-1.5 text-xs font-bold text-amber-700">
-                                                        Dipinjam
-                                                    </span>
-                                                @elseif($item->status === 'dikembalikan')
+                                                @if($condition === 'baik')
                                                     <span class="inline-flex rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-xs font-bold text-emerald-700">
-                                                        Dikembalikan
+                                                        Baik
                                                     </span>
-                                                @elseif($item->status === 'terlambat')
+                                                @elseif($condition === 'rusak ringan')
+                                                    <span class="inline-flex rounded-full border border-amber-200 bg-amber-50 px-3 py-1.5 text-xs font-bold text-amber-700">
+                                                        Rusak Ringan
+                                                    </span>
+                                                @elseif($condition === 'rusak berat')
                                                     <span class="inline-flex rounded-full border border-red-200 bg-red-50 px-3 py-1.5 text-xs font-bold text-red-700">
-                                                        Terlambat
+                                                        Rusak Berat
                                                     </span>
-                                                @elseif($item->status === 'rusak')
-                                                    <span class="inline-flex rounded-full border border-red-200 bg-red-50 px-3 py-1.5 text-xs font-bold text-red-700">
-                                                        Rusak
-                                                    </span>
-                                                @elseif($item->status === 'hilang')
-                                                    <span class="inline-flex rounded-full border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs font-bold text-slate-600">
+                                                @elseif($condition === 'hilang')
+                                                    <span class="inline-flex rounded-full border border-gray-200 bg-gray-50 px-3 py-1.5 text-xs font-bold text-gray-700">
                                                         Hilang
                                                     </span>
                                                 @else
                                                     <span class="inline-flex rounded-full border border-gray-200 bg-gray-50 px-3 py-1.5 text-xs font-bold text-gray-600">
-                                                        {{ ucfirst($item->status ?? '-') }}
+                                                        {{ ucwords($condition) }}
                                                     </span>
                                                 @endif
                                             </td>
 
-                                            <td class="px-5 py-4 text-right font-bold text-gray-900">
-                                                Rp {{ number_format($itemTotalFine, 0, ',', '.') }}
+                                            <td class="px-5 py-4">
+                                                @php
+                                                    $itemStatus = strtolower($item->status ?? '-');
+                                                @endphp
+
+                                                @if(in_array($itemStatus, ['dipinjam', 'terlambat']))
+                                                    <span class="inline-flex rounded-full border border-amber-200 bg-amber-50 px-3 py-1.5 text-xs font-bold text-amber-700">
+                                                        Dipinjam
+                                                    </span>
+                                                @elseif($itemStatus === 'dikembalikan')
+                                                    <span class="inline-flex rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-xs font-bold text-emerald-700">
+                                                        Dikembalikan
+                                                    </span>
+                                                @elseif($itemStatus === 'hilang')
+                                                    <span class="inline-flex rounded-full border border-red-200 bg-red-50 px-3 py-1.5 text-xs font-bold text-red-700">
+                                                        Hilang
+                                                    </span>
+                                                @else
+                                                    <span class="inline-flex rounded-full border border-gray-200 bg-gray-50 px-3 py-1.5 text-xs font-bold text-gray-600">
+                                                        {{ ucwords($itemStatus) }}
+                                                    </span>
+                                                @endif
+                                            </td>
+
+                                            <td class="px-5 py-4 text-right">
+                                                <p class="font-bold {{ $itemTotalFine > 0 ? 'text-red-600' : 'text-gray-900' }}">
+                                                    Rp {{ number_format($itemTotalFine, 0, ',', '.') }}
+                                                </p>
                                             </td>
                                         </tr>
                                     @empty
@@ -266,51 +286,54 @@
                                 </tbody>
                             </table>
                         </div>
+
+                        @if($isOverdue && $finePerDay > 0)
+                            <div class="mt-4 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+                                Perhitungan denda berjalan:
+                                <span class="font-bold">
+                                    {{ $lateDays }} hari × {{ $activeItemCount }} buku × Rp {{ number_format($finePerDay, 0, ',', '.') }}
+                                </span>
+                            </div>
+                        @endif
                     </section>
 
-                    {{-- Ringkasan Denda --}}
                     <section class="grid gap-5 md:grid-cols-2">
                         <div class="rounded-3xl border border-emerald-100 bg-emerald-50/60 p-5">
                             <p class="text-xs font-bold uppercase tracking-[0.14em] text-emerald-700">
                                 Ditangani Oleh
                             </p>
-                            <p class="mt-2 text-sm font-bold text-gray-900">
-                                {{ $loan->handler->name ?? 'Petugas Perpustakaan' }}
+                            <p class="mt-3 text-sm font-bold text-gray-900">
+                                {{ $loan->handler->name ?? auth()->user()->name ?? '-' }}
                             </p>
                             <p class="mt-1 text-xs text-gray-500">
                                 Dicatat pada sistem perpustakaan.
                             </p>
                         </div>
 
-                        <div class="rounded-3xl border border-rose-100 bg-rose-50/60 p-5">
-                            <p class="text-xs font-bold uppercase tracking-[0.14em] text-rose-700">
+                        <div class="rounded-3xl border {{ $totalFine > 0 ? 'border-red-100 bg-red-50' : 'border-emerald-100 bg-emerald-50' }} p-5">
+                            <p class="text-xs font-bold uppercase tracking-[0.14em] {{ $totalFine > 0 ? 'text-red-700' : 'text-emerald-700' }}">
                                 Total Denda
                             </p>
-                            <p class="mt-2 text-2xl font-extrabold text-rose-600">
+                            <p class="mt-3 text-2xl font-extrabold {{ $totalFine > 0 ? 'text-red-700' : 'text-emerald-700' }}">
                                 Rp {{ number_format($totalFine, 0, ',', '.') }}
                             </p>
-                            <p class="mt-1 text-xs text-rose-700">
-                                @if($runningFine > 0)
-                                    Total denda berjalan dari seluruh buku yang masih dipinjam.
-                                @else
-                                    Total denda dari seluruh buku pada transaksi ini.
-                                @endif
+                            <p class="mt-1 text-xs {{ $totalFine > 0 ? 'text-red-600' : 'text-emerald-700' }}">
+                                {{ $totalFine > 0 ? 'Total denda dari seluruh buku pada transaksi ini.' : 'Tidak ada denda pada transaksi ini.' }}
                             </p>
                         </div>
                     </section>
 
-                    {{-- Footer Struk --}}
-                    <div class="border-t border-gray-100 pt-6 text-center text-xs text-gray-400">
+                    <div class="border-t border-gray-100 pt-5 text-center text-xs text-gray-400">
                         <p>Harap mengembalikan buku tepat waktu untuk menghindari denda.</p>
-                        <p class="mt-1">Dicetak pada: {{ date('d M Y H:i') }}</p>
+                        <p class="mt-1">
+                            Dicetak pada: {{ now()->format('d M Y H:i') }}
+                        </p>
                     </div>
-
                 </div>
             </div>
 
-            {{-- Tombol Aksi --}}
-            <div class="mt-6 flex flex-col gap-3 sm:flex-row sm:justify-end no-print">
-                @if(in_array($loan->status, ['aktif', 'terlambat']))
+            <div class="mt-6 flex flex-col-reverse gap-3 sm:flex-row sm:items-center sm:justify-end print:hidden">
+                @if(in_array($loan->status, ['aktif', 'terlambat']) || $isOverdue)
                     <a href="{{ route('loans.edit', $loan) }}"
                        class="inline-flex items-center justify-center gap-2 rounded-2xl bg-emerald-700 px-6 py-3 text-sm font-bold text-white shadow-lg shadow-emerald-700/20 transition hover:bg-emerald-800">
                         <span class="material-symbols-outlined text-[18px]">assignment_return</span>
@@ -318,39 +341,34 @@
                     </a>
                 @endif
 
-                <button onclick="window.print()"
-                        class="inline-flex items-center justify-center gap-2 rounded-2xl bg-gray-900 px-6 py-3 text-sm font-bold text-white shadow-sm transition hover:bg-gray-800">
+                <button
+                    type="button"
+                    onclick="window.print()"
+                    class="inline-flex items-center justify-center gap-2 rounded-2xl bg-slate-900 px-6 py-3 text-sm font-bold text-white shadow-lg shadow-slate-900/20 transition hover:bg-slate-800"
+                >
                     <span class="material-symbols-outlined text-[18px]">print</span>
                     Cetak Struk
                 </button>
             </div>
-
         </div>
     </div>
 
     <style>
         @media print {
-            body * {
-                visibility: hidden !important;
+            body {
+                background: white !important;
             }
 
-            #print-area,
-            #print-area * {
-                visibility: visible !important;
+            nav,
+            header,
+            .print\:hidden {
+                display: none !important;
             }
 
             #print-area {
-                position: absolute !important;
-                left: 0 !important;
-                top: 0 !important;
-                width: 100% !important;
-                border: none !important;
                 box-shadow: none !important;
+                border: 1px solid #e5e7eb !important;
                 border-radius: 0 !important;
-            }
-
-            .no-print {
-                display: none !important;
             }
         }
     </style>

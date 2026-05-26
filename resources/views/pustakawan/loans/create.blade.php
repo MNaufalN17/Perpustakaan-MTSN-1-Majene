@@ -1,7 +1,7 @@
 @php
     $membersData = $members->map(function ($member) {
         return [
-            'id' => $member->id,
+            'id' => (string) $member->id,
             'name' => $member->name,
             'nis_nip' => $member->nis_nip,
             'class' => $member->studentClass ? $member->studentClass->class_name : 'Guru/Staff',
@@ -10,9 +10,26 @@
 
     $classesData = $classes->map(function ($class) {
         return [
-            'id' => $class->id,
+            'id' => (string) $class->id,
             'class_name' => $class->class_name,
             'academic_year' => $class->academic_year,
+        ];
+    })->values();
+
+    $bookItemsData = $bookItems->map(function ($item) {
+        $itemCode = $item->item_code ?? '-';
+        $title = $item->book->title ?? '-';
+        $author = $item->book->author ?? '-';
+        $condition = $item->condition ?? '-';
+
+        return [
+            'id' => (string) $item->id,
+            'item_code' => $itemCode,
+            'title' => $title,
+            'author' => $author,
+            'condition' => $condition,
+            'label' => $itemCode . ' - ' . $title . ' (' . ucwords($condition) . ')',
+            'search' => mb_strtolower($itemCode . ' ' . $title . ' ' . $author . ' ' . $condition),
         ];
     })->values();
 @endphp
@@ -35,6 +52,12 @@
     <div
         class="py-10 bg-gradient-to-br from-slate-50 via-emerald-50/40 to-sky-50/40 min-h-screen"
         x-data="loanCreateForm()"
+        x-init="init()"
+        @keydown.escape.window="
+            showMemberDropdown = false;
+            bookDropdownOpen = [false, false, false];
+            showModal = false;
+        "
     >
         <div class="max-w-5xl mx-auto sm:px-6 lg:px-8">
 
@@ -84,7 +107,7 @@
                 </div>
 
                 <div class="p-6 md:p-8">
-                    <form method="POST" action="{{ route('loans.store') }}" class="space-y-8">
+                    <form method="POST" action="{{ route('loans.store') }}" class="space-y-8" @submit="validateBeforeSubmit($event)">
                         @csrf
 
                         <section class="rounded-3xl border border-emerald-100 bg-emerald-50/50 p-5 md:p-6">
@@ -204,80 +227,100 @@
                                     </h4>
                                 </div>
                                 <p class="mt-2 text-sm text-gray-500">
-                                    Pilih maksimal 3 buku. Buku yang sudah dipilih tidak boleh dipilih ulang.
+                                    Ketik judul, kode eksemplar, penulis, atau kondisi buku. Maksimal 3 buku dan buku yang sudah dipilih tidak bisa dipilih ulang.
                                 </p>
                             </div>
 
                             <div class="grid grid-cols-1 gap-4">
-                                <div>
-                                    <label class="mb-1.5 block text-xs font-bold uppercase tracking-[0.12em] text-gray-500">
-                                        Buku 1
-                                        <span class="text-red-500">*</span>
-                                    </label>
-                                    <select
-                                        name="book_item_ids[]"
-                                        x-model="selectedBooks[0]"
-                                        required
-                                        class="w-full rounded-2xl border-emerald-200 bg-emerald-50/50 px-4 py-3 text-sm transition focus:border-emerald-500 focus:ring-2 focus:ring-emerald-200"
-                                    >
-                                        <option value="">-- Pilih Buku 1 (Wajib) --</option>
-                                        @foreach($bookItems as $item)
-                                            <option
-                                                value="{{ $item->id }}"
-                                                :disabled="isBookSelected('{{ $item->id }}', 0)"
-                                            >
-                                                {{ $item->item_code }} - {{ $item->book->title }} ({{ $item->condition }})
-                                            </option>
-                                        @endforeach
-                                    </select>
-                                </div>
+                                <template x-for="slot in [0, 1, 2]" :key="slot">
+                                    <div class="relative" @click.away="bookDropdownOpen[slot] = false">
+                                        <label class="mb-1.5 block text-xs font-bold uppercase tracking-[0.12em] text-gray-500">
+                                            <span x-text="'Buku ' + (slot + 1)"></span>
+                                            <span x-show="slot === 0" class="text-red-500">*</span>
+                                            <span x-show="slot > 0" class="font-medium normal-case tracking-normal text-gray-400">
+                                                (Opsional)
+                                            </span>
+                                        </label>
 
-                                <div>
-                                    <label class="mb-1.5 block text-xs font-bold uppercase tracking-[0.12em] text-gray-500">
-                                        Buku 2
-                                        <span class="font-medium normal-case tracking-normal text-gray-400">(Opsional)</span>
-                                    </label>
-                                    <select
-                                        name="book_item_ids[]"
-                                        x-model="selectedBooks[1]"
-                                        class="w-full rounded-2xl border-emerald-200 bg-emerald-50/50 px-4 py-3 text-sm transition focus:border-emerald-500 focus:ring-2 focus:ring-emerald-200"
-                                    >
-                                        <option value="">-- Pilih Buku 2 (Opsional) --</option>
-                                        @foreach($bookItems as $item)
-                                            <option
-                                                value="{{ $item->id }}"
-                                                :disabled="isBookSelected('{{ $item->id }}', 1)"
-                                            >
-                                                {{ $item->item_code }} - {{ $item->book->title }} ({{ $item->condition }})
-                                            </option>
-                                        @endforeach
-                                    </select>
-                                </div>
+                                        <input type="hidden" name="book_item_ids[]" :value="selectedBooks[slot]">
 
-                                <div>
-                                    <label class="mb-1.5 block text-xs font-bold uppercase tracking-[0.12em] text-gray-500">
-                                        Buku 3
-                                        <span class="font-medium normal-case tracking-normal text-gray-400">(Opsional)</span>
-                                    </label>
-                                    <select
-                                        name="book_item_ids[]"
-                                        x-model="selectedBooks[2]"
-                                        class="w-full rounded-2xl border-emerald-200 bg-emerald-50/50 px-4 py-3 text-sm transition focus:border-emerald-500 focus:ring-2 focus:ring-emerald-200"
-                                    >
-                                        <option value="">-- Pilih Buku 3 (Opsional) --</option>
-                                        @foreach($bookItems as $item)
-                                            <option
-                                                value="{{ $item->id }}"
-                                                :disabled="isBookSelected('{{ $item->id }}', 2)"
+                                        <div class="relative">
+                                            <span class="material-symbols-outlined pointer-events-none absolute left-4 top-1/2 -translate-y-1/2 text-emerald-600">
+                                                search
+                                            </span>
+
+                                            <input
+                                                type="text"
+                                                x-model="bookSearches[slot]"
+                                                @focus="openBookDropdown(slot)"
+                                                @input="handleBookTyping(slot)"
+                                                :required="slot === 0"
+                                                autocomplete="off"
+                                                :placeholder="slot === 0 ? 'Ketik judul atau kode buku 1...' : 'Ketik judul atau kode buku opsional...'"
+                                                class="w-full rounded-2xl border border-emerald-200 bg-emerald-50/50 px-12 py-3 text-sm text-gray-800 shadow-sm transition focus:border-emerald-500 focus:bg-white focus:ring-2 focus:ring-emerald-200"
                                             >
-                                                {{ $item->item_code }} - {{ $item->book->title }} ({{ $item->condition }})
-                                            </option>
-                                        @endforeach
-                                    </select>
-                                </div>
+
+                                            <button
+                                                type="button"
+                                                x-show="bookSearches[slot] || selectedBooks[slot]"
+                                                @click="clearBook(slot)"
+                                                class="absolute right-3 top-1/2 flex h-7 w-7 -translate-y-1/2 items-center justify-center rounded-full bg-red-50 text-red-600 transition hover:bg-red-100"
+                                            >
+                                                <span class="material-symbols-outlined text-[16px]">close</span>
+                                            </button>
+                                        </div>
+
+                                        <div
+                                            x-show="bookDropdownOpen[slot] && filteredBooks(slot).length > 0"
+                                            x-transition
+                                            class="absolute z-50 mt-2 max-h-72 w-full overflow-y-auto rounded-2xl border border-gray-100 bg-white shadow-xl divide-y divide-gray-50"
+                                        >
+                                            <template x-for="book in filteredBooks(slot)" :key="book.id">
+                                                <button
+                                                    type="button"
+                                                    @click="selectBook(slot, book)"
+                                                    class="flex w-full items-start justify-between gap-4 px-5 py-3 text-left transition hover:bg-emerald-50"
+                                                >
+                                                    <div>
+                                                        <p class="text-sm font-bold text-gray-900" x-text="book.title"></p>
+                                                        <p class="mt-1 text-xs text-gray-500">
+                                                            <span class="font-mono font-bold" x-text="book.item_code"></span>
+                                                            <span> — Penulis: </span>
+                                                            <span x-text="book.author"></span>
+                                                        </p>
+                                                    </div>
+
+                                                    <span
+                                                        class="shrink-0 rounded-xl bg-emerald-50 px-3 py-1 text-xs font-bold capitalize text-emerald-700"
+                                                        x-text="book.condition"
+                                                    ></span>
+                                                </button>
+                                            </template>
+                                        </div>
+
+                                        <div
+                                            x-show="bookDropdownOpen[slot] && bookSearches[slot].length > 0 && filteredBooks(slot).length === 0"
+                                            x-transition
+                                            class="absolute z-50 mt-2 w-full rounded-2xl border border-gray-100 bg-white p-5 text-center text-sm text-gray-500 shadow-xl"
+                                        >
+                                            Buku tidak ditemukan atau sudah dipilih pada kolom lain.
+                                        </div>
+                                    </div>
+                                </template>
                             </div>
 
+                            <div
+                                x-show="bookValidationMessage"
+                                x-transition
+                                class="mt-4 rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm font-medium text-red-700"
+                                x-text="bookValidationMessage"
+                            ></div>
+
                             @error('book_item_ids')
+                                <p class="mt-2 text-xs font-medium text-red-600">{{ $message }}</p>
+                            @enderror
+
+                            @error('book_item_ids.*')
                                 <p class="mt-2 text-xs font-medium text-red-600">{{ $message }}</p>
                             @enderror
                         </section>
@@ -290,7 +333,7 @@
                                 <input
                                     type="date"
                                     name="loan_date"
-                                    value="{{ date('Y-m-d') }}"
+                                    value="{{ old('loan_date', date('Y-m-d')) }}"
                                     readonly
                                     class="w-full cursor-not-allowed rounded-2xl border-gray-200 bg-gray-50 px-4 py-3 text-sm font-semibold text-gray-500 focus:ring-0"
                                 >
@@ -478,17 +521,31 @@
             </div>
         </div>
 
+        <style>
+            [x-cloak] {
+                display: none !important;
+            }
+        </style>
+
         <script>
             function loanCreateForm() {
                 return {
                     searchMember: '',
-                    selectedMemberId: '{{ old('member_id', '') }}',
+                    selectedMemberId: @js((string) old('member_id', '')),
                     selectedMemberText: '',
                     showMemberDropdown: false,
 
-                    membersList: @json($membersData),
+                    membersList: @js($membersData),
+                    booksList: @js($bookItemsData),
 
-                    selectedBooks: ['', '', ''],
+                    selectedBooks: [
+                        @js((string) old('book_item_ids.0', '')),
+                        @js((string) old('book_item_ids.1', '')),
+                        @js((string) old('book_item_ids.2', '')),
+                    ],
+                    bookSearches: ['', '', ''],
+                    bookDropdownOpen: [false, false, false],
+                    bookValidationMessage: '',
 
                     showModal: false,
                     newNisNip: '',
@@ -496,33 +553,143 @@
                     newGender: '',
                     newMemberType: '',
                     newClassId: '',
-                    classesData: @json($classesData),
+                    classesData: @js($classesData),
                     modalErrorMessage: '',
 
+                    init() {
+                        const selectedMember = this.membersList.find(member => String(member.id) === String(this.selectedMemberId));
+
+                        if (selectedMember) {
+                            this.selectedMemberText = `${selectedMember.nis_nip} - ${selectedMember.name} (${selectedMember.class})`;
+                        }
+
+                        this.selectedBooks = this.selectedBooks.map(value => String(value || ''));
+
+                        this.selectedBooks.forEach((bookId, index) => {
+                            const book = this.findBook(bookId);
+
+                            if (book) {
+                                this.bookSearches[index] = book.label;
+                            }
+                        });
+                    },
+
+                    normalizeText(value) {
+                        return String(value || '')
+                            .toLowerCase()
+                            .normalize('NFD')
+                            .replace(/[\u0300-\u036f]/g, '')
+                            .trim();
+                    },
+
                     get filteredMembers() {
-                        if (this.searchMember.trim() === '') {
+                        const keyword = this.normalizeText(this.searchMember);
+
+                        if (!keyword) {
                             return [];
                         }
 
                         return this.membersList
-                            .filter(member =>
-                                member.name.toLowerCase().includes(this.searchMember.toLowerCase()) ||
-                                member.nis_nip.toLowerCase().includes(this.searchMember.toLowerCase())
-                            )
+                            .filter(member => {
+                                const text = this.normalizeText(`${member.name} ${member.nis_nip} ${member.class}`);
+                                return text.includes(keyword);
+                            })
                             .slice(0, 7);
                     },
 
                     selectMember(member) {
-                        this.selectedMemberId = member.id;
+                        this.selectedMemberId = String(member.id);
                         this.selectedMemberText = `${member.nis_nip} - ${member.name} (${member.class})`;
                         this.searchMember = '';
                         this.showMemberDropdown = false;
                     },
 
+                    findBook(bookId) {
+                        if (!bookId) {
+                            return null;
+                        }
+
+                        return this.booksList.find(book => String(book.id) === String(bookId)) || null;
+                    },
+
+                    openBookDropdown(index) {
+                        this.bookValidationMessage = '';
+                        this.bookDropdownOpen = this.bookDropdownOpen.map((_, slot) => slot === index);
+                    },
+
+                    handleBookTyping(index) {
+                        this.selectedBooks[index] = '';
+                        this.bookValidationMessage = '';
+                        this.bookDropdownOpen[index] = true;
+                    },
+
+                    filteredBooks(index) {
+                        const keyword = this.normalizeText(this.bookSearches[index]);
+
+                        return this.booksList
+                            .filter(book => {
+                                const notSelectedElsewhere = !this.isBookSelected(book.id, index);
+                                const matchKeyword = keyword === '' || this.normalizeText(book.search).includes(keyword);
+
+                                return notSelectedElsewhere && matchKeyword;
+                            })
+                            .slice(0, 40);
+                    },
+
+                    selectBook(index, book) {
+                        this.selectedBooks[index] = String(book.id);
+                        this.bookSearches[index] = book.label;
+                        this.bookDropdownOpen[index] = false;
+                        this.bookValidationMessage = '';
+                    },
+
+                    clearBook(index) {
+                        this.selectedBooks[index] = '';
+                        this.bookSearches[index] = '';
+                        this.bookDropdownOpen[index] = false;
+                        this.bookValidationMessage = '';
+                    },
+
                     isBookSelected(bookId, currentIndex) {
                         return this.selectedBooks.some((selectedBookId, index) => {
-                            return index !== currentIndex && selectedBookId === bookId;
+                            return index !== currentIndex && String(selectedBookId) === String(bookId);
                         });
+                    },
+
+                    validateBeforeSubmit(event) {
+                        this.bookValidationMessage = '';
+
+                        if (!this.selectedMemberId) {
+                            event.preventDefault();
+                            this.showMemberDropdown = true;
+                            return;
+                        }
+
+                        if (!this.selectedBooks[0]) {
+                            event.preventDefault();
+                            this.bookValidationMessage = 'Buku 1 wajib dipilih dari daftar pencarian.';
+                            this.bookDropdownOpen[0] = true;
+                            return;
+                        }
+
+                        for (let index = 0; index < this.bookSearches.length; index++) {
+                            const typed = this.bookSearches[index] && this.bookSearches[index].trim() !== '';
+                            const selected = this.selectedBooks[index] && String(this.selectedBooks[index]).trim() !== '';
+
+                            if (typed && !selected) {
+                                event.preventDefault();
+                                this.bookValidationMessage = `Buku ${index + 1} belum dipilih dari daftar. Klik salah satu hasil pencarian terlebih dahulu.`;
+                                this.bookDropdownOpen[index] = true;
+                                return;
+                            }
+                        }
+
+                        const selectedOnly = this.selectedBooks.filter(value => value);
+
+                        if (new Set(selectedOnly).size !== selectedOnly.length) {
+                            event.preventDefault();
+                            this.bookValidationMessage = 'Buku yang sama tidak boleh dipilih lebih dari satu kali.';
+                        }
                     },
 
                     async submitQuickMember() {
@@ -560,7 +727,7 @@
 
                             if (response.ok && result.success) {
                                 const newAddedMember = {
-                                    id: result.member.id,
+                                    id: String(result.member.id),
                                     name: result.member.name,
                                     nis_nip: result.member.nis_nip,
                                     class: result.class_name,
