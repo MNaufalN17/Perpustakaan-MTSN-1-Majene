@@ -34,8 +34,6 @@ class LoanController extends Controller
             ->get();
 
         $bookItems = BookItem::with(['book', 'activeLoanItems'])
-            ->where('status', 'tersedia')
-            ->whereDoesntHave('activeLoanItems')
             ->orderBy('item_code')
             ->get();
 

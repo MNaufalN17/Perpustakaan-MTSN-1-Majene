@@ -13,11 +13,12 @@ class BookItemController extends Controller
 {
     public function index()
     {
-        $bookItems = BookItem::with(['book.category', 'book.ddcClass'])
+        $books = Book::with(['category', 'ddcClass'])
+            ->withCount('bookItems')
             ->latest()
-            ->get();
+            ->paginate(10);
 
-        return view('pustakawan.book_items.index', compact('bookItems'));
+        return view('pustakawan.book_items.index', compact('books'));
     }
 
     public function create()

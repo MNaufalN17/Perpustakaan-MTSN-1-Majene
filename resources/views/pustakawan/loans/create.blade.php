@@ -21,6 +21,7 @@
         $title = $item->book->title ?? '-';
         $author = $item->book->author ?? '-';
         $condition = $item->condition ?? '-';
+        $status = $item->status ?? 'tersedia';
 
         return [
             'id' => (string) $item->id,
@@ -28,6 +29,7 @@
             'title' => $title,
             'author' => $author,
             'condition' => $condition,
+            'status' => $status,
             'label' => $itemCode . ' - ' . $title . ' (' . ucwords($condition) . ')',
             'search' => mb_strtolower($itemCode . ' ' . $title . ' ' . $author . ' ' . $condition),
         ];
@@ -291,9 +293,11 @@
                                                     </div>
 
                                                     <span
-                                                        class="shrink-0 rounded-xl bg-emerald-50 px-3 py-1 text-xs font-bold capitalize text-emerald-700"
-                                                        x-text="book.condition"
-                                                    ></span>
+                                                        class="shrink-0 rounded-xl px-3 py-1 text-xs font-bold capitalize"
+                                                        :class="book.status === 'tersedia' ? 'bg-emerald-50 text-emerald-700' : (book.status === 'dipinjam' ? 'bg-amber-50 text-amber-700' : 'bg-red-50 text-red-700')"
+                                                        x-text="book.status === 'tersedia' ? 'Tersedia' : (book.status === 'dipinjam' ? 'Dipinjam' : book.status)">
+                                                    </span>
+                                                    <span class="ml-2 shrink-0 rounded-xl bg-emerald-50 px-3 py-1 text-xs font-bold capitalize text-emerald-700" x-text="book.condition"></span>
                                                 </button>
                                             </template>
                                         </div>
@@ -334,11 +338,10 @@
                                     type="date"
                                     name="loan_date"
                                     value="{{ old('loan_date', date('Y-m-d')) }}"
-                                    readonly
-                                    class="w-full cursor-not-allowed rounded-2xl border-gray-200 bg-gray-50 px-4 py-3 text-sm font-semibold text-gray-500 focus:ring-0"
+                                    class="w-full rounded-2xl border-gray-200 bg-white px-4 py-3 text-sm font-semibold text-gray-700 shadow-sm transition focus:border-emerald-500 focus:ring-2 focus:ring-emerald-200"
                                 >
                                 <p class="mt-2 text-xs text-gray-400">
-                                    Tanggal pinjam otomatis mengikuti tanggal hari ini.
+                                    Tanggal pinjam default hari ini; ubah untuk tes keterlambatan atau pengembalian tertunda.
                                 </p>
                             </div>
 
@@ -350,12 +353,11 @@
                                     type="date"
                                     name="due_date"
                                     value="{{ old('due_date', date('Y-m-d', strtotime('+3 days'))) }}"
-                                    min="{{ date('Y-m-d') }}"
                                     required
                                     class="w-full rounded-2xl border-emerald-300 bg-white px-4 py-3 text-sm font-bold text-emerald-800 shadow-sm transition focus:border-emerald-500 focus:ring-2 focus:ring-emerald-200"
                                 >
                                 <p class="mt-2 text-xs text-emerald-700">
-                                    Masa pinjam default adalah 3 hari.
+                                    Masa pinjam default adalah 3 hari. Ubah tanggal jatuh tempo untuk menguji denda keterlambatan.
                                 </p>
                                 @error('due_date')
                                     <p class="mt-2 text-xs font-medium text-red-600">{{ $message }}</p>

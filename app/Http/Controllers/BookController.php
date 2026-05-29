@@ -69,6 +69,36 @@ class BookController extends Controller
             'description' => !empty($validated['description']) ? trim($validated['description']) : null,
         ]);
 
+        // Automatically create one physical copy (BookItem) so the book appears in loan selector
+        try {
+            $classificationCode = $book->ddcClass->code ?? '000';
+            $authorCode = $book->author_code ?: $this->makeAuthorCode($book->author);
+            $titleCode = $book->title_code ?: $this->makeTitleCode($book->title);
+
+            $copyNumber = 1;
+            $itemCode = $this->buildItemCode($classificationCode, $authorCode, $titleCode, $copyNumber);
+
+            // Ensure unique item_code (unlikely for a new book, but safe)
+            while (BookItem::where('item_code', $itemCode)->exists()) {
+                $copyNumber++;
+                $itemCode = $this->buildItemCode($classificationCode, $authorCode, $titleCode, $copyNumber);
+            }
+
+            BookItem::create([
+                'book_id' => $book->id,
+                'item_code' => $itemCode,
+                'classification_code' => $classificationCode,
+                'author_code' => $authorCode,
+                'title_code' => $titleCode,
+                'title_initial' => $titleCode,
+                'copy_number' => $copyNumber,
+                'status' => 'tersedia',
+                'condition' => 'baik',
+            ]);
+        } catch (\Throwable $e) {
+            // If auto-creation fails, continue silently — book was still created.
+        }
+
         return redirect()
             ->route('books.show', $book)
             ->with('success_title', 'Buku induk berhasil ditambahkan')
