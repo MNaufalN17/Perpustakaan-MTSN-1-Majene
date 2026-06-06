@@ -1,72 +1,123 @@
-@php
-    $membersData = $members->map(function ($member) {
-        return [
-            'id' => (string) $member->id,
-            'name' => $member->name,
-            'nis_nip' => $member->nis_nip,
-            'class' => $member->studentClass ? $member->studentClass->class_name : 'Guru/Staff',
-        ];
-    })->values();
-
-    $classesData = $classes->map(function ($class) {
-        return [
-            'id' => (string) $class->id,
-            'class_name' => $class->class_name,
-            'academic_year' => $class->academic_year,
-        ];
-    })->values();
-
-    $bookItemsData = $bookItems->map(function ($item) {
-        $itemCode = $item->item_code ?? '-';
-        $title = $item->book->title ?? '-';
-        $author = $item->book->author ?? '-';
-        $condition = $item->condition ?? '-';
-        $status = $item->status ?? 'tersedia';
-
-        return [
-            'id' => (string) $item->id,
-            'item_code' => $itemCode,
-            'title' => $title,
-            'author' => $author,
-            'condition' => $condition,
-            'status' => $status,
-            'label' => $itemCode . ' - ' . $title . ' (' . ucwords($condition) . ')',
-            'search' => mb_strtolower($itemCode . ' ' . $title . ' ' . $author . ' ' . $condition),
-        ];
-    })->values();
-@endphp
-
 <x-app-layout>
+    @php
+        $classCollection = collect($studentClasses ?? $classes ?? []);
+
+        if ($classCollection->isEmpty()) {
+            try {
+                $classCollection = \App\Models\StudentClass::orderBy('level')
+                    ->orderBy('class_name')
+                    ->get();
+            } catch (\Throwable $e) {
+                $classCollection = collect();
+            }
+        }
+
+        $borrowedIds = collect($borrowedBookItemIds ?? [])
+            ->map(fn ($id) => (string) $id)
+            ->values();
+
+        $memberOptions = collect($members ?? [])->map(function ($member) {
+            $className = $member->studentClass->class_name ?? 'Guru/Staff';
+
+            return [
+                'id' => (string) $member->id,
+                'name' => $member->name,
+                'nis_nip' => $member->nis_nip,
+                'member_code' => $member->member_code,
+                'member_type' => $member->member_type,
+                'class' => $className,
+                'search' => strtolower(
+                    ($member->name ?? '') . ' ' .
+                    ($member->nis_nip ?? '') . ' ' .
+                    ($member->member_code ?? '') . ' ' .
+                    ($member->member_type ?? '') . ' ' .
+                    $className
+                ),
+            ];
+        })->values();
+
+        $bookItemOptions = collect($bookItems ?? [])->map(function ($item) use ($borrowedIds) {
+            $titleCode = $item->title_code ?? $item->title_initial ?? null;
+
+            return [
+                'id' => (string) $item->id,
+                'item_code' => $item->item_code,
+                'copy_number' => $item->copy_number,
+                'status' => $item->status,
+                'condition' => $item->condition,
+                'book_title' => $item->book->title ?? '-',
+                'author' => $item->book->author ?? '-',
+                'publisher' => $item->book->publisher ?? '-',
+                'classification_code' => $item->classification_code ?? null,
+                'author_code' => $item->author_code ?? null,
+                'title_code' => $titleCode,
+                'is_borrowed_active' => $borrowedIds->contains((string) $item->id),
+                'search' => strtolower(
+                    ($item->item_code ?? '') . ' ' .
+                    ($item->copy_number ?? '') . ' ' .
+                    ($item->status ?? '') . ' ' .
+                    ($item->condition ?? '') . ' ' .
+                    ($item->classification_code ?? '') . ' ' .
+                    ($item->author_code ?? '') . ' ' .
+                    ($titleCode ?? '') . ' ' .
+                    ($item->book->title ?? '') . ' ' .
+                    ($item->book->author ?? '') . ' ' .
+                    ($item->book->publisher ?? '')
+                ),
+            ];
+        })->values();
+    @endphp
+
+    <style>
+        [x-cloak] {
+            display: none !important;
+        }
+    </style>
+
     <x-slot name="header">
-        <div class="flex flex-col gap-1">
-            <p class="text-xs font-bold uppercase tracking-[0.18em] text-emerald-700">
-                Peminjaman Buku
-            </p>
-            <h2 class="text-xl font-bold text-gray-900 leading-tight">
-                Form Peminjaman Baru
-            </h2>
-            <p class="text-sm text-gray-500">
-                Pilih anggota, tentukan buku yang dipinjam, lalu sistem akan memvalidasi transaksi secara otomatis.
-            </p>
+        <div class="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+            <div>
+                <p class="text-xs font-bold uppercase tracking-[0.18em] text-emerald-700">
+                    Transaksi Perpustakaan
+                </p>
+
+                <h2 class="mt-1 text-xl font-bold text-gray-900">
+                    Buat Peminjaman Buku
+                </h2>
+
+                <p class="mt-1 text-sm text-gray-500">
+                    Pilih anggota dan buku yang akan dipinjam.
+                </p>
+            </div>
+
+            <a href="{{ route('loans.index') }}"
+               class="inline-flex items-center justify-center gap-2 rounded-2xl border border-gray-200 bg-white px-5 py-3 text-sm font-bold text-gray-600 transition hover:bg-gray-50">
+                <span class="material-symbols-outlined text-[18px]">arrow_back</span>
+                Kembali
+            </a>
         </div>
     </x-slot>
 
     <div
-        class="py-10 bg-gradient-to-br from-slate-50 via-emerald-50/40 to-sky-50/40 min-h-screen"
-        x-data="loanCreateForm()"
-        x-init="init()"
-        @keydown.escape.window="
-            showMemberDropdown = false;
-            bookDropdownOpen = [false, false, false];
-            showModal = false;
-        "
+        class="min-h-screen bg-gradient-to-br from-slate-50 via-emerald-50/40 to-sky-50/40 py-10"
+        x-data="loanCreateForm(
+            @js($memberOptions),
+            @js($bookItemOptions),
+            @js([
+                'quickMemberUrl' => url('/members/quick-store'),
+                'csrfToken' => csrf_token(),
+                'oldMemberId' => old('member_id'),
+                'oldBookItemIds' => old('book_item_ids', []),
+            ])
+        )"
     >
-        <div class="max-w-5xl mx-auto sm:px-6 lg:px-8">
+        <div class="mx-auto max-w-6xl sm:px-6 lg:px-8">
 
             @if ($errors->any())
-                <div class="mb-5 rounded-2xl border border-red-200 bg-red-50 p-4 text-sm text-red-700 shadow-sm">
-                    <div class="font-bold mb-2">Terjadi kesalahan:</div>
-                    <ul class="list-disc list-inside space-y-1">
+                <div class="mb-6 rounded-2xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">
+                    <div class="mb-2 font-bold">Terjadi kesalahan:</div>
+
+                    <ul class="list-disc space-y-1 pl-5">
                         @foreach ($errors->all() as $error)
                             <li>{{ $error }}</li>
                         @endforeach
@@ -74,689 +125,837 @@
                 </div>
             @endif
 
-            <div class="overflow-hidden rounded-[2rem] border border-white/70 bg-white/75 backdrop-blur-xl shadow-[0_20px_60px_rgba(15,23,42,0.08)]">
+            <form
+                method="POST"
+                action="{{ route('loans.store') }}"
+                class="overflow-hidden rounded-[2rem] border border-white/70 bg-white/90 shadow-[0_20px_60px_rgba(15,23,42,0.08)] backdrop-blur-xl"
+                @submit="validateMainForm"
+            >
+                @csrf
 
                 <div class="relative overflow-hidden bg-gradient-to-r from-emerald-700 to-teal-500 p-6 text-white">
                     <div class="absolute -right-16 -top-20 h-52 w-52 rounded-full bg-white/10 blur-2xl"></div>
                     <div class="absolute -left-20 bottom-0 h-48 w-48 rounded-full bg-emerald-200/20 blur-2xl"></div>
 
-                    <div class="relative flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-                        <div class="flex items-center gap-4">
-                            <div class="flex h-12 w-12 items-center justify-center rounded-2xl bg-white/20 text-white shadow-sm">
-                                <span class="material-symbols-outlined" style="font-variation-settings: 'FILL' 1;">
-                                    assignment_add
-                                </span>
-                            </div>
-
-                            <div>
-                                <h3 class="text-lg font-bold">
-                                    Input Transaksi Peminjaman
-                                </h3>
-                                <p class="mt-1 text-sm text-emerald-50">
-                                    Maksimal 3 buku, masa pinjam 3 hari, dan hanya untuk anggota aktif.
-                                </p>
-                            </div>
+                    <div class="relative flex items-start gap-4">
+                        <div class="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-white/20">
+                            <span class="material-symbols-outlined text-[26px]">assignment_add</span>
                         </div>
 
-                        <a
-                            href="{{ route('loans.index') }}"
-                            class="inline-flex items-center justify-center gap-2 rounded-2xl border border-white/25 bg-white/15 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-white/25"
-                        >
-                            <span class="material-symbols-outlined text-[18px]">arrow_back</span>
-                            Kembali
-                        </a>
+                        <div>
+                            <p class="text-xs font-bold uppercase tracking-[0.18em] text-emerald-50">
+                                Form Peminjaman
+                            </p>
+
+                            <h3 class="mt-2 text-2xl font-extrabold leading-tight">
+                                Data Transaksi Baru
+                            </h3>
+
+                            <p class="mt-1 text-sm text-emerald-50">
+                                Pastikan anggota dan eksemplar buku yang dipilih sudah benar.
+                            </p>
+                        </div>
                     </div>
                 </div>
 
-                <div class="p-6 md:p-8">
-                    <form method="POST" action="{{ route('loans.store') }}" class="space-y-8" @submit="validateBeforeSubmit($event)">
-                        @csrf
+                <div class="space-y-6 p-6">
 
-                        <section class="rounded-3xl border border-emerald-100 bg-emerald-50/50 p-5 md:p-6">
-                            <div class="mb-5 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                                <div>
-                                    <div class="flex items-center gap-2">
-                                        <div class="flex h-9 w-9 items-center justify-center rounded-xl bg-emerald-100 text-emerald-700">
-                                            <span class="material-symbols-outlined text-[20px]">person</span>
-                                        </div>
-                                        <h4 class="font-bold text-gray-900">
-                                            Data Peminjam
-                                        </h4>
-                                    </div>
-                                    <p class="mt-2 text-sm text-gray-500">
-                                        Cari anggota berdasarkan nama atau NIS/NIP.
-                                    </p>
-                                </div>
+                    <div
+                        x-show="formError"
+                        x-cloak
+                        class="rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm font-semibold text-red-700"
+                        x-text="formError"
+                    ></div>
 
-                                <button
-                                    type="button"
-                                    @click="showModal = true"
-                                    class="inline-flex items-center justify-center gap-2 rounded-2xl border border-emerald-200 bg-white px-4 py-2.5 text-sm font-bold text-emerald-700 shadow-sm transition hover:bg-emerald-50"
-                                >
-                                    <span class="material-symbols-outlined text-[18px]">person_add</span>
-                                    Daftar Anggota Kilat
-                                </button>
-                            </div>
+                    <section class="rounded-3xl border border-gray-100 bg-white p-5 shadow-sm">
+                        <div class="mb-5 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                            <div>
+                                <h4 class="font-bold text-gray-900">
+                                    Pilih Anggota
+                                </h4>
 
-                            <input type="hidden" name="member_id" :value="selectedMemberId">
-
-                            <div
-                                x-show="selectedMemberId"
-                                x-transition
-                                class="flex flex-col gap-3 rounded-2xl border border-emerald-200 bg-white p-4 sm:flex-row sm:items-center sm:justify-between"
-                            >
-                                <div class="flex items-start gap-3">
-                                    <div class="flex h-10 w-10 items-center justify-center rounded-xl bg-emerald-100 text-emerald-700">
-                                        <span class="material-symbols-outlined">verified_user</span>
-                                    </div>
-                                    <div>
-                                        <p class="text-xs font-bold uppercase tracking-[0.14em] text-emerald-700">
-                                            Anggota Dipilih
-                                        </p>
-                                        <p class="mt-1 text-sm font-bold text-gray-900" x-text="selectedMemberText"></p>
-                                    </div>
-                                </div>
-
-                                <button
-                                    type="button"
-                                    @click="selectedMemberId = ''; selectedMemberText = ''; searchMember = '';"
-                                    class="inline-flex items-center justify-center gap-1 rounded-xl bg-red-50 px-3 py-2 text-xs font-bold text-red-600 transition hover:bg-red-100"
-                                >
-                                    <span class="material-symbols-outlined text-[16px]">close</span>
-                                    Ganti
-                                </button>
-                            </div>
-
-                            <div x-show="!selectedMemberId" class="relative" @click.away="showMemberDropdown = false">
-                                <div class="relative">
-                                    <span class="material-symbols-outlined pointer-events-none absolute left-4 top-1/2 -translate-y-1/2 text-emerald-600">
-                                        search
-                                    </span>
-                                    <input
-                                        type="text"
-                                        x-model="searchMember"
-                                        @focus="showMemberDropdown = true"
-                                        @input="showMemberDropdown = true"
-                                        placeholder="Ketik nama anggota atau NIS/NIP..."
-                                        class="w-full rounded-2xl border border-emerald-200 bg-white px-12 py-3.5 text-sm text-gray-800 shadow-sm transition focus:border-emerald-500 focus:ring-2 focus:ring-emerald-200"
-                                    >
-                                </div>
-
-                                <div
-                                    x-show="showMemberDropdown && filteredMembers.length > 0"
-                                    x-transition
-                                    class="absolute z-50 mt-2 max-h-64 w-full overflow-y-auto rounded-2xl border border-gray-100 bg-white shadow-xl divide-y divide-gray-50"
-                                >
-                                    <template x-for="member in filteredMembers" :key="member.id">
-                                        <button
-                                            type="button"
-                                            @click="selectMember(member)"
-                                            class="flex w-full items-center justify-between gap-4 px-5 py-3 text-left transition hover:bg-emerald-50"
-                                        >
-                                            <div>
-                                                <p class="text-sm font-bold text-gray-900" x-text="member.name"></p>
-                                                <p class="mt-0.5 text-xs text-gray-500" x-text="'NIS/NIP: ' + member.nis_nip"></p>
-                                            </div>
-                                            <span class="rounded-xl bg-emerald-50 px-3 py-1 text-xs font-bold text-emerald-700" x-text="member.class"></span>
-                                        </button>
-                                    </template>
-                                </div>
-
-                                <div
-                                    x-show="showMemberDropdown && searchMember.length > 0 && filteredMembers.length === 0"
-                                    x-transition
-                                    class="absolute z-50 mt-2 w-full rounded-2xl border border-gray-100 bg-white p-5 text-center text-sm text-gray-500 shadow-xl"
-                                >
-                                    Anggota tidak ditemukan. Klik
-                                    <span class="font-bold text-emerald-700">Daftar Anggota Kilat</span>
-                                    untuk menambahkan data baru.
-                                </div>
-                            </div>
-
-                            @error('member_id')
-                                <p class="mt-2 text-xs font-medium text-red-600">{{ $message }}</p>
-                            @enderror
-                        </section>
-
-                        <section class="rounded-3xl border border-gray-100 bg-white p-5 md:p-6 shadow-sm">
-                            <div class="mb-5">
-                                <div class="flex items-center gap-2">
-                                    <div class="flex h-9 w-9 items-center justify-center rounded-xl bg-emerald-100 text-emerald-700">
-                                        <span class="material-symbols-outlined text-[20px]">menu_book</span>
-                                    </div>
-                                    <h4 class="font-bold text-gray-900">
-                                        Buku yang Dipinjam
-                                    </h4>
-                                </div>
-                                <p class="mt-2 text-sm text-gray-500">
-                                    Ketik judul, kode eksemplar, penulis, atau kondisi buku. Maksimal 3 buku dan buku yang sudah dipilih tidak bisa dipilih ulang.
+                                <p class="mt-1 text-xs text-gray-500">
+                                    Cari berdasarkan nama, NIS/NIP, kode anggota, atau kelas.
                                 </p>
                             </div>
 
-                            <div class="grid grid-cols-1 gap-4">
-                                <template x-for="slot in [0, 1, 2]" :key="slot">
-                                    <div class="relative" @click.away="bookDropdownOpen[slot] = false">
-                                        <label class="mb-1.5 block text-xs font-bold uppercase tracking-[0.12em] text-gray-500">
-                                            <span x-text="'Buku ' + (slot + 1)"></span>
-                                            <span x-show="slot === 0" class="text-red-500">*</span>
-                                            <span x-show="slot > 0" class="font-medium normal-case tracking-normal text-gray-400">
-                                                (Opsional)
-                                            </span>
-                                        </label>
+                            <button
+                                type="button"
+                                @click="openQuickMemberModal()"
+                                class="inline-flex items-center justify-center gap-2 rounded-2xl bg-emerald-700 px-4 py-3 text-sm font-bold text-white shadow-lg shadow-emerald-700/20 transition hover:bg-emerald-800"
+                            >
+                                <span class="material-symbols-outlined text-[18px]">person_add</span>
+                                Registrasi Anggota Kilat
+                            </button>
+                        </div>
 
-                                        <input type="hidden" name="book_item_ids[]" :value="selectedBooks[slot]">
+                        <input type="hidden" name="member_id" :value="selectedMember ? selectedMember.id : ''">
 
-                                        <div class="relative">
-                                            <span class="material-symbols-outlined pointer-events-none absolute left-4 top-1/2 -translate-y-1/2 text-emerald-600">
-                                                search
-                                            </span>
+                        <div class="relative">
+                            <span class="material-symbols-outlined pointer-events-none absolute left-4 top-1/2 -translate-y-1/2 text-[20px] text-gray-400">
+                                search
+                            </span>
 
-                                            <input
-                                                type="text"
-                                                x-model="bookSearches[slot]"
-                                                @focus="openBookDropdown(slot)"
-                                                @input="handleBookTyping(slot)"
-                                                :required="slot === 0"
-                                                autocomplete="off"
-                                                :placeholder="slot === 0 ? 'Ketik judul atau kode buku 1...' : 'Ketik judul atau kode buku opsional...'"
-                                                class="w-full rounded-2xl border border-emerald-200 bg-emerald-50/50 px-12 py-3 text-sm text-gray-800 shadow-sm transition focus:border-emerald-500 focus:bg-white focus:ring-2 focus:ring-emerald-200"
-                                            >
+                            <input
+                                type="text"
+                                x-model="memberSearch"
+                                @focus="memberDropdownOpen = true"
+                                @input="memberDropdownOpen = true"
+                                placeholder="Ketik nama anggota, NIS/NIP, atau kelas..."
+                                class="w-full rounded-2xl border border-gray-200 bg-slate-50 px-12 py-3 text-sm focus:border-emerald-500 focus:bg-white focus:ring-2 focus:ring-emerald-100"
+                                autocomplete="off"
+                            >
 
-                                            <button
-                                                type="button"
-                                                x-show="bookSearches[slot] || selectedBooks[slot]"
-                                                @click="clearBook(slot)"
-                                                class="absolute right-3 top-1/2 flex h-7 w-7 -translate-y-1/2 items-center justify-center rounded-full bg-red-50 text-red-600 transition hover:bg-red-100"
-                                            >
-                                                <span class="material-symbols-outlined text-[16px]">close</span>
-                                            </button>
+                            <button
+                                type="button"
+                                x-show="selectedMember"
+                                x-cloak
+                                @click="clearSelectedMember()"
+                                class="absolute right-3 top-1/2 -translate-y-1/2 rounded-xl px-2 py-1 text-xs font-bold text-gray-500 hover:bg-gray-100"
+                            >
+                                Reset
+                            </button>
+
+                            <div
+                                x-show="memberDropdownOpen"
+                                x-cloak
+                                @click.outside="memberDropdownOpen = false"
+                                class="absolute z-30 mt-2 max-h-72 w-full overflow-y-auto rounded-2xl border border-gray-100 bg-white p-2 shadow-2xl"
+                            >
+                                <template x-for="member in filteredMembers()" :key="member.id">
+                                    <button
+                                        type="button"
+                                        @click="selectMember(member)"
+                                        class="flex w-full items-start justify-between gap-3 rounded-xl px-4 py-3 text-left transition hover:bg-emerald-50"
+                                    >
+                                        <div>
+                                            <p class="font-bold text-gray-900" x-text="member.name"></p>
+
+                                            <p class="mt-1 text-xs text-gray-500">
+                                                <span x-text="member.nis_nip || '-'"></span>
+                                                <span> — </span>
+                                                <span x-text="member.class || 'Guru/Staff'"></span>
+                                            </p>
                                         </div>
 
-                                        <div
-                                            x-show="bookDropdownOpen[slot] && filteredBooks(slot).length > 0"
-                                            x-transition
-                                            class="absolute z-50 mt-2 max-h-72 w-full overflow-y-auto rounded-2xl border border-gray-100 bg-white shadow-xl divide-y divide-gray-50"
+                                        <span
+                                            class="rounded-full border border-emerald-100 bg-emerald-50 px-3 py-1 text-xs font-bold text-emerald-700"
+                                            x-text="formatText(member.member_type || '-')"
+                                        ></span>
+                                    </button>
+                                </template>
+
+                                <div
+                                    x-show="filteredMembers().length === 0"
+                                    class="px-4 py-8 text-center text-sm text-gray-500"
+                                >
+                                    Anggota tidak ditemukan.
+                                </div>
+                            </div>
+                        </div>
+
+                        <div
+                            x-show="selectedMember"
+                            x-cloak
+                            class="mt-4 rounded-2xl border border-emerald-100 bg-emerald-50 p-4"
+                        >
+                            <p class="text-xs font-bold uppercase tracking-[0.14em] text-emerald-700">
+                                Anggota Terpilih
+                            </p>
+
+                            <p class="mt-2 font-extrabold text-gray-900" x-text="selectedMember?.name"></p>
+
+                            <p class="mt-1 text-sm text-gray-600">
+                                <span x-text="selectedMember?.nis_nip || '-'"></span>
+                                <span> — </span>
+                                <span x-text="selectedMember?.class || 'Guru/Staff'"></span>
+                            </p>
+                        </div>
+                    </section>
+
+                    <section class="rounded-3xl border border-gray-100 bg-white p-5 shadow-sm">
+                        <h4 class="font-bold text-gray-900">
+                            Tanggal Peminjaman
+                        </h4>
+
+                        <div class="mt-5 grid gap-4 md:grid-cols-2">
+                            <div>
+                                <label for="loan_date" class="block text-sm font-bold text-gray-700">
+                                    Tanggal Pinjam
+                                </label>
+
+                                <input
+                                    id="loan_date"
+                                    name="loan_date"
+                                    type="date"
+                                    value="{{ old('loan_date', now()->format('Y-m-d')) }}"
+                                    required
+                                    class="mt-2 block w-full rounded-2xl border border-gray-200 bg-slate-50 px-4 py-3 text-sm focus:border-emerald-500 focus:ring-2 focus:ring-emerald-100"
+                                >
+                            </div>
+
+                            <div>
+                                <label for="due_date" class="block text-sm font-bold text-gray-700">
+                                    Batas Kembali
+                                </label>
+
+                                <input
+                                    id="due_date"
+                                    name="due_date"
+                                    type="date"
+                                    value="{{ old('due_date', now()->addDays(7)->format('Y-m-d')) }}"
+                                    required
+                                    class="mt-2 block w-full rounded-2xl border border-gray-200 bg-slate-50 px-4 py-3 text-sm focus:border-emerald-500 focus:ring-2 focus:ring-emerald-100"
+                                >
+                            </div>
+                        </div>
+                    </section>
+
+                    <section class="rounded-3xl border border-gray-100 bg-white p-5 shadow-sm">
+                        <div class="mb-5 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                            <div>
+                                <h4 class="font-bold text-gray-900">
+                                    Pilih Buku
+                                </h4>
+
+                                <p class="mt-1 text-xs text-gray-500">
+                                    Bisa memilih lebih dari satu eksemplar buku.
+                                </p>
+                            </div>
+
+                            <button
+                                type="button"
+                                @click="addBookRow()"
+                                class="inline-flex items-center justify-center gap-2 rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-bold text-emerald-700 transition hover:bg-emerald-100"
+                            >
+                                <span class="material-symbols-outlined text-[18px]">add_circle</span>
+                                Tambah Baris Buku
+                            </button>
+                        </div>
+
+                        <div class="space-y-4">
+                            <template x-for="(row, index) in bookRows" :key="row.key">
+                                <div class="rounded-3xl border border-gray-100 bg-slate-50 p-4">
+                                    <div class="mb-3 flex items-center justify-between gap-3">
+                                        <p class="text-sm font-bold text-gray-800">
+                                            Buku <span x-text="index + 1"></span>
+                                        </p>
+
+                                        <button
+                                            type="button"
+                                            x-show="bookRows.length > 1"
+                                            x-cloak
+                                            @click="removeBookRow(index)"
+                                            class="inline-flex items-center gap-1 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-xs font-bold text-red-700 transition hover:bg-red-100"
                                         >
-                                            <template x-for="book in filteredBooks(slot)" :key="book.id">
+                                            <span class="material-symbols-outlined text-[15px]">delete</span>
+                                            Hapus
+                                        </button>
+                                    </div>
+
+                                    <template x-if="row.book_item_id">
+                                        <input type="hidden" name="book_item_ids[]" :value="row.book_item_id">
+                                    </template>
+
+                                    <div class="relative">
+                                        <span class="material-symbols-outlined pointer-events-none absolute left-4 top-1/2 -translate-y-1/2 text-[20px] text-gray-400">
+                                            search
+                                        </span>
+
+                                        <input
+                                            type="text"
+                                            x-model="row.search"
+                                            @focus="row.open = true"
+                                            @input="row.open = true"
+                                            placeholder="Ketik judul buku, kode eksemplar, penulis, atau kode klasifikasi..."
+                                            class="w-full rounded-2xl border border-gray-200 bg-white px-12 py-3 text-sm focus:border-emerald-500 focus:ring-2 focus:ring-emerald-100"
+                                            autocomplete="off"
+                                        >
+
+                                        <button
+                                            type="button"
+                                            x-show="row.book_item_id"
+                                            x-cloak
+                                            @click="clearBookRow(row)"
+                                            class="absolute right-3 top-1/2 -translate-y-1/2 rounded-xl px-2 py-1 text-xs font-bold text-gray-500 hover:bg-gray-100"
+                                        >
+                                            Reset
+                                        </button>
+
+                                        <div
+                                            x-show="row.open"
+                                            x-cloak
+                                            @click.outside="row.open = false"
+                                            class="absolute z-20 mt-2 max-h-72 w-full overflow-y-auto rounded-2xl border border-gray-100 bg-white p-2 shadow-2xl"
+                                        >
+                                            <template x-for="item in filteredBookItems(row)" :key="item.id">
                                                 <button
                                                     type="button"
-                                                    @click="selectBook(slot, book)"
-                                                    class="flex w-full items-start justify-between gap-4 px-5 py-3 text-left transition hover:bg-emerald-50"
+                                                    @click="selectBook(row, item)"
+                                                    class="flex w-full items-start justify-between gap-3 rounded-xl px-4 py-3 text-left transition hover:bg-emerald-50"
                                                 >
                                                     <div>
-                                                        <p class="text-sm font-bold text-gray-900" x-text="book.title"></p>
+                                                        <p class="font-bold text-gray-900" x-text="item.book_title"></p>
+
                                                         <p class="mt-1 text-xs text-gray-500">
-                                                            <span class="font-mono font-bold" x-text="book.item_code"></span>
-                                                            <span> — Penulis: </span>
-                                                            <span x-text="book.author"></span>
+                                                            <span x-text="item.item_code || '-'"></span>
+                                                            <span> — Copy </span>
+                                                            <span x-text="item.copy_number || '-'"></span>
+                                                            <span> — </span>
+                                                            <span x-text="item.author || '-'"></span>
+                                                        </p>
+
+                                                        <p class="mt-1 text-xs text-gray-400">
+                                                            Kondisi:
+                                                            <span x-text="formatText(item.condition || '-')"></span>
                                                         </p>
                                                     </div>
 
-                                                    <span
-                                                        class="shrink-0 rounded-xl px-3 py-1 text-xs font-bold capitalize"
-                                                        :class="book.status === 'tersedia' ? 'bg-emerald-50 text-emerald-700' : (book.status === 'dipinjam' ? 'bg-amber-50 text-amber-700' : 'bg-red-50 text-red-700')"
-                                                        x-text="book.status === 'tersedia' ? 'Tersedia' : (book.status === 'dipinjam' ? 'Dipinjam' : book.status)">
+                                                    <span class="rounded-full border border-emerald-100 bg-emerald-50 px-3 py-1 text-xs font-bold text-emerald-700">
+                                                        Tersedia
                                                     </span>
-                                                    <span class="ml-2 shrink-0 rounded-xl bg-emerald-50 px-3 py-1 text-xs font-bold capitalize text-emerald-700" x-text="book.condition"></span>
                                                 </button>
                                             </template>
-                                        </div>
 
-                                        <div
-                                            x-show="bookDropdownOpen[slot] && bookSearches[slot].length > 0 && filteredBooks(slot).length === 0"
-                                            x-transition
-                                            class="absolute z-50 mt-2 w-full rounded-2xl border border-gray-100 bg-white p-5 text-center text-sm text-gray-500 shadow-xl"
-                                        >
-                                            Buku tidak ditemukan atau sudah dipilih pada kolom lain.
+                                            <div
+                                                x-show="filteredBookItems(row).length === 0"
+                                                class="px-4 py-8 text-center text-sm text-gray-500"
+                                            >
+                                                Buku tidak ditemukan atau sudah dipilih.
+                                            </div>
                                         </div>
                                     </div>
-                                </template>
-                            </div>
 
-                            <div
-                                x-show="bookValidationMessage"
-                                x-transition
-                                class="mt-4 rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm font-medium text-red-700"
-                                x-text="bookValidationMessage"
-                            ></div>
+                                    <div
+                                        x-show="selectedBook(row)"
+                                        x-cloak
+                                        class="mt-4 rounded-2xl border border-emerald-100 bg-white p-4"
+                                    >
+                                        <p class="text-xs font-bold uppercase tracking-[0.14em] text-emerald-700">
+                                            Buku Terpilih
+                                        </p>
 
-                            @error('book_item_ids')
-                                <p class="mt-2 text-xs font-medium text-red-600">{{ $message }}</p>
-                            @enderror
+                                        <p class="mt-2 font-extrabold text-gray-900" x-text="selectedBook(row)?.book_title"></p>
 
-                            @error('book_item_ids.*')
-                                <p class="mt-2 text-xs font-medium text-red-600">{{ $message }}</p>
-                            @enderror
-                        </section>
-
-                        <section class="grid grid-cols-1 gap-5 md:grid-cols-2">
-                            <div class="rounded-3xl border border-gray-100 bg-white p-5 shadow-sm">
-                                <label class="mb-2 block text-xs font-bold uppercase tracking-[0.12em] text-gray-500">
-                                    Tanggal Pinjam
-                                </label>
-                                <input
-                                    type="date"
-                                    name="loan_date"
-                                    value="{{ old('loan_date', date('Y-m-d')) }}"
-                                    class="w-full rounded-2xl border-gray-200 bg-white px-4 py-3 text-sm font-semibold text-gray-700 shadow-sm transition focus:border-emerald-500 focus:ring-2 focus:ring-emerald-200"
-                                >
-                                <p class="mt-2 text-xs text-gray-400">
-                                    Tanggal pinjam default hari ini; ubah untuk tes keterlambatan atau pengembalian tertunda.
-                                </p>
-                            </div>
-
-                            <div class="rounded-3xl border border-emerald-100 bg-emerald-50/60 p-5 shadow-sm">
-                                <label class="mb-2 block text-xs font-bold uppercase tracking-[0.12em] text-emerald-700">
-                                    Batas Waktu Pengembalian
-                                </label>
-                                <input
-                                    type="date"
-                                    name="due_date"
-                                    value="{{ old('due_date', date('Y-m-d', strtotime('+3 days'))) }}"
-                                    required
-                                    class="w-full rounded-2xl border-emerald-300 bg-white px-4 py-3 text-sm font-bold text-emerald-800 shadow-sm transition focus:border-emerald-500 focus:ring-2 focus:ring-emerald-200"
-                                >
-                                <p class="mt-2 text-xs text-emerald-700">
-                                    Masa pinjam default adalah 3 hari. Ubah tanggal jatuh tempo untuk menguji denda keterlambatan.
-                                </p>
-                                @error('due_date')
-                                    <p class="mt-2 text-xs font-medium text-red-600">{{ $message }}</p>
-                                @enderror
-                            </div>
-                        </section>
-
-                        <div class="flex flex-col-reverse gap-3 border-t border-gray-100 pt-6 sm:flex-row sm:items-center sm:justify-end">
-                            <a
-                                href="{{ route('loans.index') }}"
-                                class="inline-flex items-center justify-center rounded-2xl border border-gray-200 bg-white px-6 py-3 text-sm font-bold text-gray-600 transition hover:bg-gray-50"
-                            >
-                                Batal
-                            </a>
-
-                            <button
-                                type="submit"
-                                class="inline-flex items-center justify-center gap-2 rounded-2xl bg-emerald-700 px-6 py-3 text-sm font-bold text-white shadow-lg shadow-emerald-700/20 transition hover:bg-emerald-800"
-                            >
-                                <span>Proses Peminjaman</span>
-                                <span class="material-symbols-outlined text-[18px]">send</span>
-                            </button>
+                                        <p class="mt-1 text-sm text-gray-600">
+                                            <span x-text="selectedBook(row)?.item_code || '-'"></span>
+                                            <span> — Copy </span>
+                                            <span x-text="selectedBook(row)?.copy_number || '-'"></span>
+                                            <span> — </span>
+                                            <span x-text="selectedBook(row)?.author || '-'"></span>
+                                        </p>
+                                    </div>
+                                </div>
+                            </template>
                         </div>
-                    </form>
+                    </section>
+
+                    <section class="rounded-3xl border border-gray-100 bg-white p-5 shadow-sm">
+                        <label for="notes" class="block text-sm font-bold text-gray-700">
+                            Catatan
+                        </label>
+
+                        <textarea
+                            id="notes"
+                            name="notes"
+                            rows="3"
+                            class="mt-2 block w-full rounded-2xl border border-gray-200 bg-slate-50 px-4 py-3 text-sm focus:border-emerald-500 focus:ring-2 focus:ring-emerald-100"
+                            placeholder="Opsional"
+                        >{{ old('notes') }}</textarea>
+                    </section>
+
+                    <div class="flex flex-col-reverse gap-3 border-t border-gray-100 pt-6 sm:flex-row sm:justify-end">
+                        <a href="{{ route('loans.index') }}"
+                           class="inline-flex items-center justify-center rounded-2xl border border-gray-200 bg-white px-5 py-3 text-sm font-bold text-gray-600 transition hover:bg-gray-50">
+                            Batal
+                        </a>
+
+                        <button
+                            type="submit"
+                            class="inline-flex items-center justify-center gap-2 rounded-2xl bg-emerald-700 px-5 py-3 text-sm font-bold text-white shadow-lg shadow-emerald-700/20 transition hover:bg-emerald-800"
+                        >
+                            <span class="material-symbols-outlined text-[18px]">save</span>
+                            Simpan Peminjaman
+                        </button>
+                    </div>
                 </div>
-            </div>
+            </form>
         </div>
 
         <div
             x-show="showModal"
-            class="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto px-4 py-6"
-            x-transition.opacity
-            style="display: none;"
+            x-cloak
+            class="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 px-4 py-8 backdrop-blur-sm"
         >
-            <div class="fixed inset-0 bg-gray-900/60 backdrop-blur-sm" @click="showModal = false"></div>
-
             <div
-                class="relative z-50 w-full max-w-lg overflow-hidden rounded-[2rem] border border-white/70 bg-white shadow-2xl"
-                x-transition:enter="transition ease-out duration-300"
-                x-transition:enter-start="opacity-0 scale-95 translate-y-3"
-                x-transition:enter-end="opacity-100 scale-100 translate-y-0"
+                @click.outside="closeQuickMemberModal()"
+                class="w-full max-w-xl overflow-hidden rounded-[2rem] bg-white shadow-2xl"
             >
-                <div class="bg-gradient-to-r from-emerald-700 to-teal-500 p-5 text-white">
-                    <div class="flex items-center justify-between">
-                        <div class="flex items-center gap-3">
-                            <div class="flex h-10 w-10 items-center justify-center rounded-2xl bg-white/20">
-                                <span class="material-symbols-outlined">person_add</span>
-                            </div>
-                            <div>
-                                <h3 class="text-base font-bold">Registrasi Anggota Kilat</h3>
-                                <p class="text-xs text-emerald-50">Tambahkan anggota tanpa meninggalkan form peminjaman.</p>
-                            </div>
+                <div class="flex items-center justify-between bg-gradient-to-r from-emerald-700 to-teal-500 px-6 py-5 text-white">
+                    <div class="flex items-center gap-3">
+                        <div class="flex h-10 w-10 items-center justify-center rounded-2xl bg-white/20">
+                            <span class="material-symbols-outlined">person_add</span>
                         </div>
 
-                        <button
-                            type="button"
-                            @click="showModal = false"
-                            class="flex h-9 w-9 items-center justify-center rounded-full bg-white/15 transition hover:bg-white/25"
-                        >
-                            ✕
-                        </button>
+                        <div>
+                            <h3 class="text-base font-extrabold">
+                                Registrasi Anggota Kilat
+                            </h3>
+
+                            <p class="mt-0.5 text-xs font-medium text-emerald-50">
+                                Tambahkan anggota tanpa meninggalkan form peminjaman.
+                            </p>
+                        </div>
                     </div>
+
+                    <button
+                        type="button"
+                        @click="closeQuickMemberModal()"
+                        class="flex h-10 w-10 items-center justify-center rounded-2xl bg-white/15 transition hover:bg-white/25"
+                    >
+                        <span class="material-symbols-outlined">close</span>
+                    </button>
                 </div>
 
-                <div class="p-6 space-y-5">
+                <form class="space-y-5 p-6" @submit.prevent="submitQuickMember()">
                     <div
                         x-show="modalErrorMessage"
-                        x-transition
-                        class="rounded-2xl border border-red-100 bg-red-50 p-3 text-xs font-medium text-red-700"
+                        x-cloak
+                        class="rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm font-semibold text-red-700"
                         x-text="modalErrorMessage"
                     ></div>
 
-                    <div class="space-y-4 text-sm">
+                    <div
+                        x-show="modalSuccessMessage"
+                        x-cloak
+                        class="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-semibold text-emerald-700"
+                        x-text="modalSuccessMessage"
+                    ></div>
+
+                    <div>
+                        <label class="block text-sm font-bold text-gray-700">
+                            NIS / NIP <span class="text-red-500">*</span>
+                        </label>
+
+                        <input
+                            type="text"
+                            x-model="newNisNip"
+                            required
+                            class="mt-2 block w-full rounded-2xl border border-gray-200 bg-slate-50 px-4 py-3 text-sm focus:border-emerald-500 focus:ring-2 focus:ring-emerald-100"
+                            placeholder="Masukkan NIS / NIP"
+                        >
+                    </div>
+
+                    <div>
+                        <label class="block text-sm font-bold text-gray-700">
+                            Nama Lengkap <span class="text-red-500">*</span>
+                        </label>
+
+                        <input
+                            type="text"
+                            x-model="newName"
+                            required
+                            class="mt-2 block w-full rounded-2xl border border-gray-200 bg-slate-50 px-4 py-3 text-sm focus:border-emerald-500 focus:ring-2 focus:ring-emerald-100"
+                            placeholder="Masukkan nama lengkap"
+                        >
+                    </div>
+
+                    <div class="grid gap-4 md:grid-cols-2">
                         <div>
-                            <label class="block font-semibold text-gray-700">
-                                NIS / NIP <span class="text-red-500">*</span>
+                            <label class="block text-sm font-bold text-gray-700">
+                                Jenis Kelamin <span class="text-red-500">*</span>
                             </label>
-                            <input
-                                type="text"
-                                x-model="newNisNip"
-                                placeholder="Masukkan nomor identitas unik..."
-                                class="mt-1.5 block w-full rounded-2xl border-gray-200 bg-gray-50 px-4 py-3 text-sm transition focus:border-emerald-500 focus:ring-2 focus:ring-emerald-200"
-                            >
-                        </div>
 
-                        <div>
-                            <label class="block font-semibold text-gray-700">
-                                Nama Lengkap <span class="text-red-500">*</span>
-                            </label>
-                            <input
-                                type="text"
-                                x-model="newName"
-                                placeholder="Nama lengkap anggota..."
-                                class="mt-1.5 block w-full rounded-2xl border-gray-200 bg-gray-50 px-4 py-3 text-sm transition focus:border-emerald-500 focus:ring-2 focus:ring-emerald-200"
-                            >
-                        </div>
-
-                        <div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
-                            <div>
-                                <label class="block font-semibold text-gray-700">
-                                    Jenis Kelamin <span class="text-red-500">*</span>
-                                </label>
-                                <select
-                                    x-model="newGender"
-                                    class="mt-1.5 block w-full rounded-2xl border-gray-200 bg-gray-50 px-4 py-3 text-sm transition focus:border-emerald-500 focus:ring-2 focus:ring-emerald-200"
-                                >
-                                    <option value="">-- Pilih --</option>
-                                    <option value="laki-laki">Laki-laki</option>
-                                    <option value="perempuan">Perempuan</option>
-                                </select>
-                            </div>
-
-                            <div>
-                                <label class="block font-semibold text-gray-700">
-                                    Tipe Anggota <span class="text-red-500">*</span>
-                                </label>
-                                <select
-                                    x-model="newMemberType"
-                                    @change="if(newMemberType === 'guru') newClassId = ''"
-                                    class="mt-1.5 block w-full rounded-2xl border-gray-200 bg-gray-50 px-4 py-3 text-sm transition focus:border-emerald-500 focus:ring-2 focus:ring-emerald-200"
-                                >
-                                    <option value="">-- Pilih --</option>
-                                    <option value="siswa">Siswa</option>
-                                    <option value="guru">Guru</option>
-                                </select>
-                            </div>
-                        </div>
-
-                        <div x-show="newMemberType === 'siswa'" x-transition>
-                            <label class="block font-semibold text-gray-700">
-                                Kelas Siswa <span class="text-red-500">*</span>
-                            </label>
                             <select
-                                x-model="newClassId"
-                                class="mt-1.5 block w-full rounded-2xl border-emerald-200 bg-emerald-50/60 px-4 py-3 text-sm transition focus:border-emerald-500 focus:ring-2 focus:ring-emerald-200"
+                                x-model="newGender"
+                                required
+                                class="mt-2 block w-full rounded-2xl border border-gray-200 bg-slate-50 px-4 py-3 text-sm focus:border-emerald-500 focus:ring-2 focus:ring-emerald-100"
                             >
-                                <option value="">-- Pilih Kelas --</option>
-                                <template x-for="cls in classesData" :key="cls.id">
-                                    <option :value="cls.id" x-text="cls.class_name + ' (' + cls.academic_year + ')'"></option>
-                                </template>
+                                <option value="laki-laki">Laki-laki</option>
+                                <option value="perempuan">Perempuan</option>
+                            </select>
+                        </div>
+
+                        <div>
+                            <label class="block text-sm font-bold text-gray-700">
+                                Tipe Anggota <span class="text-red-500">*</span>
+                            </label>
+
+                            <select
+                                x-model="newMemberType"
+                                required
+                                class="mt-2 block w-full rounded-2xl border border-gray-200 bg-slate-50 px-4 py-3 text-sm focus:border-emerald-500 focus:ring-2 focus:ring-emerald-100"
+                            >
+                                <option value="siswa">Siswa</option>
+                                <option value="guru">Guru</option>
                             </select>
                         </div>
                     </div>
 
-                    <div class="flex flex-col-reverse gap-3 border-t border-gray-100 pt-5 sm:flex-row sm:justify-end">
+                    <div x-show="newMemberType === 'siswa'" x-cloak>
+                        <label class="block text-sm font-bold text-gray-700">
+                            Kelas Siswa <span class="text-red-500">*</span>
+                        </label>
+
+                        <select
+                            x-model="newClassId"
+                            class="mt-2 block w-full rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm focus:border-emerald-500 focus:ring-2 focus:ring-emerald-100"
+                        >
+                            <option value="">Pilih kelas siswa</option>
+
+                            @foreach($classCollection as $class)
+                                <option value="{{ $class->id }}">
+                                    {{ $class->class_name ?? $class->name ?? '-' }}
+                                </option>
+                            @endforeach
+                        </select>
+
+                        @if($classCollection->isEmpty())
+                            <p class="mt-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-semibold text-amber-700">
+                                Data kelas belum tersedia. Tambahkan kelas terlebih dahulu pada menu Kelas.
+                            </p>
+                        @endif
+                    </div>
+
+                    <div>
+                        <label class="block text-sm font-bold text-gray-700">
+                            No. HP / WhatsApp
+                        </label>
+
+                        <input
+                            type="text"
+                            x-model="newPhone"
+                            class="mt-2 block w-full rounded-2xl border border-gray-200 bg-slate-50 px-4 py-3 text-sm focus:border-emerald-500 focus:ring-2 focus:ring-emerald-100"
+                            placeholder="Opsional"
+                        >
+                    </div>
+
+                    <div class="flex items-center justify-end gap-3 border-t border-gray-100 pt-5">
                         <button
                             type="button"
-                            @click="showModal = false"
-                            class="rounded-2xl border border-gray-200 bg-white px-5 py-2.5 text-sm font-bold text-gray-600 transition hover:bg-gray-50"
+                            @click="closeQuickMemberModal()"
+                            class="inline-flex items-center justify-center rounded-2xl border border-gray-200 bg-white px-5 py-3 text-sm font-bold text-gray-600 transition hover:bg-gray-50"
                         >
                             Batal
                         </button>
 
                         <button
-                            type="button"
-                            @click="submitQuickMember()"
-                            class="rounded-2xl bg-emerald-700 px-6 py-2.5 text-sm font-bold text-white shadow-lg shadow-emerald-700/20 transition hover:bg-emerald-800"
+                            type="submit"
+                            :disabled="quickSaving"
+                            class="inline-flex items-center justify-center rounded-2xl bg-emerald-700 px-5 py-3 text-sm font-bold text-white shadow-lg shadow-emerald-700/20 transition hover:bg-emerald-800 disabled:cursor-not-allowed disabled:opacity-60"
                         >
-                            Daftarkan Anggota
+                            <span x-show="!quickSaving">Daftarkan Anggota</span>
+                            <span x-show="quickSaving" x-cloak>Menyimpan...</span>
                         </button>
                     </div>
-                </div>
+                </form>
             </div>
         </div>
+    </div>
 
-        <style>
-            [x-cloak] {
-                display: none !important;
-            }
-        </style>
+    <script>
+        function loanCreateForm(members, bookItems, config) {
+            return {
+                membersList: members || [],
+                bookItemsList: bookItems || [],
+                config: config || {},
 
-        <script>
-            function loanCreateForm() {
-                return {
-                    searchMember: '',
-                    selectedMemberId: @js((string) old('member_id', '')),
-                    selectedMemberText: '',
-                    showMemberDropdown: false,
+                memberSearch: '',
+                memberDropdownOpen: false,
+                selectedMember: null,
 
-                    membersList: @js($membersData),
-                    booksList: @js($bookItemsData),
+                bookRows: [
+                    {
+                        key: Date.now(),
+                        book_item_id: '',
+                        search: '',
+                        open: false,
+                    }
+                ],
 
-                    selectedBooks: [
-                        @js((string) old('book_item_ids.0', '')),
-                        @js((string) old('book_item_ids.1', '')),
-                        @js((string) old('book_item_ids.2', '')),
-                    ],
-                    bookSearches: ['', '', ''],
-                    bookDropdownOpen: [false, false, false],
-                    bookValidationMessage: '',
+                formError: '',
 
-                    showModal: false,
-                    newNisNip: '',
-                    newName: '',
-                    newGender: '',
-                    newMemberType: '',
-                    newClassId: '',
-                    classesData: @js($classesData),
-                    modalErrorMessage: '',
+                showModal: false,
+                quickSaving: false,
+                modalErrorMessage: '',
+                modalSuccessMessage: '',
 
-                    init() {
-                        const selectedMember = this.membersList.find(member => String(member.id) === String(this.selectedMemberId));
+                newNisNip: '',
+                newName: '',
+                newGender: 'laki-laki',
+                newMemberType: 'siswa',
+                newClassId: '',
+                newPhone: '',
 
-                        if (selectedMember) {
-                            this.selectedMemberText = `${selectedMember.nis_nip} - ${selectedMember.name} (${selectedMember.class})`;
+                init() {
+                    if (this.config.oldMemberId) {
+                        const oldMember = this.membersList.find(member => String(member.id) === String(this.config.oldMemberId));
+
+                        if (oldMember) {
+                            this.selectMember(oldMember);
                         }
+                    }
 
-                        this.selectedBooks = this.selectedBooks.map(value => String(value || ''));
+                    const oldBookItemIds = Array.isArray(this.config.oldBookItemIds)
+                        ? this.config.oldBookItemIds
+                        : [];
 
-                        this.selectedBooks.forEach((bookId, index) => {
-                            const book = this.findBook(bookId);
+                    if (oldBookItemIds.length > 0) {
+                        this.bookRows = oldBookItemIds.map((id) => {
+                            const item = this.bookItemsList.find(bookItem => String(bookItem.id) === String(id));
 
-                            if (book) {
-                                this.bookSearches[index] = book.label;
-                            }
+                            return {
+                                key: Date.now() + Math.random(),
+                                book_item_id: item ? String(item.id) : '',
+                                search: item ? `${item.book_title} - ${item.item_code || '-'}` : '',
+                                open: false,
+                            };
                         });
-                    },
 
-                    normalizeText(value) {
-                        return String(value || '')
-                            .toLowerCase()
-                            .normalize('NFD')
-                            .replace(/[\u0300-\u036f]/g, '')
-                            .trim();
-                    },
-
-                    get filteredMembers() {
-                        const keyword = this.normalizeText(this.searchMember);
-
-                        if (!keyword) {
-                            return [];
+                        if (this.bookRows.length === 0) {
+                            this.addBookRow();
                         }
+                    }
+                },
 
-                        return this.membersList
-                            .filter(member => {
-                                const text = this.normalizeText(`${member.name} ${member.nis_nip} ${member.class}`);
-                                return text.includes(keyword);
-                            })
-                            .slice(0, 7);
-                    },
+                filteredMembers() {
+                    const keyword = (this.memberSearch || '').toLowerCase().trim();
 
-                    selectMember(member) {
-                        this.selectedMemberId = String(member.id);
-                        this.selectedMemberText = `${member.nis_nip} - ${member.name} (${member.class})`;
-                        this.searchMember = '';
-                        this.showMemberDropdown = false;
-                    },
+                    if (!keyword) {
+                        return this.membersList.slice(0, 25);
+                    }
 
-                    findBook(bookId) {
-                        if (!bookId) {
-                            return null;
-                        }
+                    return this.membersList
+                        .filter(member => (member.search || '').includes(keyword))
+                        .slice(0, 25);
+                },
 
-                        return this.booksList.find(book => String(book.id) === String(bookId)) || null;
-                    },
+                selectMember(member) {
+                    this.selectedMember = member;
+                    this.memberSearch = `${member.name} - ${member.nis_nip || '-'}`;
+                    this.memberDropdownOpen = false;
+                    this.formError = '';
+                },
 
-                    openBookDropdown(index) {
-                        this.bookValidationMessage = '';
-                        this.bookDropdownOpen = this.bookDropdownOpen.map((_, slot) => slot === index);
-                    },
+                clearSelectedMember() {
+                    this.selectedMember = null;
+                    this.memberSearch = '';
+                    this.memberDropdownOpen = false;
+                },
 
-                    handleBookTyping(index) {
-                        this.selectedBooks[index] = '';
-                        this.bookValidationMessage = '';
-                        this.bookDropdownOpen[index] = true;
-                    },
+                addBookRow() {
+                    this.bookRows.push({
+                        key: Date.now() + Math.random(),
+                        book_item_id: '',
+                        search: '',
+                        open: false,
+                    });
+                },
 
-                    filteredBooks(index) {
-                        const keyword = this.normalizeText(this.bookSearches[index]);
+                removeBookRow(index) {
+                    this.bookRows.splice(index, 1);
 
-                        return this.booksList
-                            .filter(book => {
-                                const notSelectedElsewhere = !this.isBookSelected(book.id, index);
-                                const matchKeyword = keyword === '' || this.normalizeText(book.search).includes(keyword);
+                    if (this.bookRows.length === 0) {
+                        this.addBookRow();
+                    }
+                },
 
-                                return notSelectedElsewhere && matchKeyword;
-                            })
-                            .slice(0, 40);
-                    },
+                selectedBook(row) {
+                    return this.bookItemsList.find(item => String(item.id) === String(row.book_item_id)) || null;
+                },
 
-                    selectBook(index, book) {
-                        this.selectedBooks[index] = String(book.id);
-                        this.bookSearches[index] = book.label;
-                        this.bookDropdownOpen[index] = false;
-                        this.bookValidationMessage = '';
-                    },
+                selectedBookIdsExcept(currentRow) {
+                    return this.bookRows
+                        .filter(row => row !== currentRow && row.book_item_id)
+                        .map(row => String(row.book_item_id));
+                },
 
-                    clearBook(index) {
-                        this.selectedBooks[index] = '';
-                        this.bookSearches[index] = '';
-                        this.bookDropdownOpen[index] = false;
-                        this.bookValidationMessage = '';
-                    },
+                filteredBookItems(row) {
+                    const keyword = (row.search || '').toLowerCase().trim();
+                    const selectedIds = this.selectedBookIdsExcept(row);
 
-                    isBookSelected(bookId, currentIndex) {
-                        return this.selectedBooks.some((selectedBookId, index) => {
-                            return index !== currentIndex && String(selectedBookId) === String(bookId);
+                    return this.bookItemsList
+                        .filter(item => {
+                            const status = String(item.status || '').toLowerCase();
+
+                            const isAvailable = status === 'tersedia';
+                            const isNotBorrowedActive = !item.is_borrowed_active;
+                            const isNotSelected = !selectedIds.includes(String(item.id));
+                            const matchesKeyword = !keyword || (item.search || '').includes(keyword);
+
+                            return isAvailable && isNotBorrowedActive && isNotSelected && matchesKeyword;
+                        })
+                        .slice(0, 30);
+                },
+
+                selectBook(row, item) {
+                    row.book_item_id = String(item.id);
+                    row.search = `${item.book_title} - ${item.item_code || '-'}`;
+                    row.open = false;
+                    this.formError = '';
+                },
+
+                clearBookRow(row) {
+                    row.book_item_id = '';
+                    row.search = '';
+                    row.open = false;
+                },
+
+                selectedBookCount() {
+                    return this.bookRows.filter(row => row.book_item_id).length;
+                },
+
+                validateMainForm(event) {
+                    this.formError = '';
+
+                    if (!this.selectedMember) {
+                        event.preventDefault();
+                        this.formError = 'Pilih anggota terlebih dahulu.';
+                        window.scrollTo({ top: 0, behavior: 'smooth' });
+                        return;
+                    }
+
+                    if (this.selectedBookCount() < 1) {
+                        event.preventDefault();
+                        this.formError = 'Minimal pilih satu buku untuk dipinjam.';
+                        window.scrollTo({ top: 0, behavior: 'smooth' });
+                    }
+                },
+
+                openQuickMemberModal() {
+                    this.showModal = true;
+                    this.modalErrorMessage = '';
+                    this.modalSuccessMessage = '';
+
+                    if (!this.newGender) {
+                        this.newGender = 'laki-laki';
+                    }
+
+                    if (!this.newMemberType) {
+                        this.newMemberType = 'siswa';
+                    }
+                },
+
+                closeQuickMemberModal() {
+                    if (this.quickSaving) {
+                        return;
+                    }
+
+                    this.showModal = false;
+                    this.modalErrorMessage = '';
+                    this.modalSuccessMessage = '';
+                },
+
+                resetQuickForm() {
+                    this.newNisNip = '';
+                    this.newName = '';
+                    this.newGender = 'laki-laki';
+                    this.newMemberType = 'siswa';
+                    this.newClassId = '';
+                    this.newPhone = '';
+                    this.modalErrorMessage = '';
+                    this.modalSuccessMessage = '';
+                },
+
+                async submitQuickMember() {
+                    this.modalErrorMessage = '';
+                    this.modalSuccessMessage = '';
+
+                    if (!this.newNisNip || !this.newName || !this.newGender || !this.newMemberType) {
+                        this.modalErrorMessage = 'Mohon lengkapi semua kolom wajib.';
+                        return;
+                    }
+
+                    if (this.newMemberType === 'siswa' && !this.newClassId) {
+                        this.modalErrorMessage = 'Siswa wajib memilih kelas.';
+                        return;
+                    }
+
+                    this.quickSaving = true;
+
+                    try {
+                        const response = await fetch(this.config.quickMemberUrl, {
+                            method: 'POST',
+                            headers: {
+                                'Content-Type': 'application/json',
+                                'X-CSRF-TOKEN': this.config.csrfToken,
+                                'X-Requested-With': 'XMLHttpRequest',
+                                'Accept': 'application/json',
+                            },
+                            body: JSON.stringify({
+                                nis_nip: this.newNisNip,
+                                name: this.newName,
+                                gender: this.newGender,
+                                member_type: this.newMemberType,
+                                student_class_id: this.newMemberType === 'siswa' ? this.newClassId : null,
+                                phone: this.newPhone || null,
+                                status: 'aktif',
+                            }),
                         });
-                    },
 
-                    validateBeforeSubmit(event) {
-                        this.bookValidationMessage = '';
+                        const contentType = response.headers.get('content-type') || '';
 
-                        if (!this.selectedMemberId) {
-                            event.preventDefault();
-                            this.showMemberDropdown = true;
-                            return;
-                        }
-
-                        if (!this.selectedBooks[0]) {
-                            event.preventDefault();
-                            this.bookValidationMessage = 'Buku 1 wajib dipilih dari daftar pencarian.';
-                            this.bookDropdownOpen[0] = true;
-                            return;
-                        }
-
-                        for (let index = 0; index < this.bookSearches.length; index++) {
-                            const typed = this.bookSearches[index] && this.bookSearches[index].trim() !== '';
-                            const selected = this.selectedBooks[index] && String(this.selectedBooks[index]).trim() !== '';
-
-                            if (typed && !selected) {
-                                event.preventDefault();
-                                this.bookValidationMessage = `Buku ${index + 1} belum dipilih dari daftar. Klik salah satu hasil pencarian terlebih dahulu.`;
-                                this.bookDropdownOpen[index] = true;
+                        if (!contentType.includes('application/json')) {
+                            if (response.ok) {
+                                window.location.reload();
                                 return;
                             }
+
+                            throw new Error('Server tidak mengembalikan response JSON.');
                         }
 
-                        const selectedOnly = this.selectedBooks.filter(value => value);
+                        const result = await response.json();
 
-                        if (new Set(selectedOnly).size !== selectedOnly.length) {
-                            event.preventDefault();
-                            this.bookValidationMessage = 'Buku yang sama tidak boleh dipilih lebih dari satu kali.';
-                        }
-                    },
-
-                    async submitQuickMember() {
-                        this.modalErrorMessage = '';
-
-                        if (!this.newNisNip || !this.newName || !this.newGender || !this.newMemberType) {
-                            this.modalErrorMessage = 'Mohon lengkapi semua kolom wajib.';
-                            return;
+                        if (!response.ok || !result.success || !result.member) {
+                            throw new Error(result.message || 'Gagal menyimpan data anggota.');
                         }
 
-                        if (this.newMemberType === 'siswa' && !this.newClassId) {
-                            this.modalErrorMessage = 'Siswa wajib memilih kelas.';
-                            return;
+                        const newAddedMember = {
+                            id: String(result.member.id),
+                            name: result.member.name,
+                            nis_nip: result.member.nis_nip,
+                            member_code: result.member.member_code,
+                            member_type: result.member.member_type,
+                            class: result.class_name || result.member.student_class || 'Guru/Staff',
+                            search: (
+                                (result.member.name || '') + ' ' +
+                                (result.member.nis_nip || '') + ' ' +
+                                (result.member.member_code || '') + ' ' +
+                                (result.member.member_type || '') + ' ' +
+                                (result.class_name || result.member.student_class || 'Guru/Staff')
+                            ).toLowerCase(),
+                        };
+
+                        const alreadyExists = this.membersList.some(member => String(member.id) === String(newAddedMember.id));
+
+                        if (!alreadyExists) {
+                            this.membersList.push(newAddedMember);
                         }
 
-                        try {
-                            const response = await fetch('{{ route('members.store') }}', {
-                                method: 'POST',
-                                headers: {
-                                    'Content-Type': 'application/json',
-                                    'X-CSRF-TOKEN': '{{ csrf_token() }}',
-                                    'Accept': 'application/json',
-                                },
-                                body: JSON.stringify({
-                                    nis_nip: this.newNisNip,
-                                    name: this.newName,
-                                    gender: this.newGender,
-                                    member_type: this.newMemberType,
-                                    student_class_id: this.newClassId,
-                                    status: 'aktif',
-                                }),
-                            });
+                        this.selectMember(newAddedMember);
 
-                            const result = await response.json();
+                        this.modalSuccessMessage = result.message || 'Anggota berhasil didaftarkan.';
 
-                            if (response.ok && result.success) {
-                                const newAddedMember = {
-                                    id: String(result.member.id),
-                                    name: result.member.name,
-                                    nis_nip: result.member.nis_nip,
-                                    class: result.class_name,
-                                };
+                        setTimeout(() => {
+                            this.resetQuickForm();
+                            this.showModal = false;
+                        }, 600);
 
-                                this.membersList.push(newAddedMember);
-                                this.selectMember(newAddedMember);
+                    } catch (error) {
+                        this.modalErrorMessage = error.message || 'Terjadi kesalahan sistem. Silakan refresh halaman atau coba lagi.';
+                    } finally {
+                        this.quickSaving = false;
+                    }
+                },
 
-                                this.newNisNip = '';
-                                this.newName = '';
-                                this.newGender = '';
-                                this.newMemberType = '';
-                                this.newClassId = '';
-                                this.showModal = false;
-                            } else {
-                                if (result.errors && result.errors.nis_nip) {
-                                    this.modalErrorMessage = 'Gagal: NIS/NIP ini sudah terdaftar di sistem.';
-                                } else {
-                                    this.modalErrorMessage = result.message || 'Gagal menyimpan data anggota.';
-                                }
-                            }
-                        } catch (error) {
-                            this.modalErrorMessage = 'Terjadi kesalahan sistem. Silakan refresh halaman atau coba lagi.';
-                        }
-                    },
-                };
-            }
-        </script>
-    </div>
+                formatText(value) {
+                    if (!value) return '-';
+
+                    return String(value)
+                        .replace(/_/g, ' ')
+                        .replace(/\b\w/g, char => char.toUpperCase());
+                },
+            };
+        }
+    </script>
 </x-app-layout>

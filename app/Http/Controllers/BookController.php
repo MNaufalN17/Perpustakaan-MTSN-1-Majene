@@ -8,6 +8,7 @@ use App\Models\Category;
 use App\Models\DdcClass;
 use Illuminate\Http\Request;
 use Illuminate\Validation\Rule;
+use Illuminate\Database\QueryException;
 
 class BookController extends Controller
 {
@@ -172,26 +173,42 @@ class BookController extends Controller
             ->with('success_detail', 'Sebanyak ' . $syncResult['updated'] . ' eksemplar berhasil disinkronkan. ' . $syncResult['skipped'] . ' eksemplar dilewati karena konflik kode.');
     }
 
-    public function destroy(Book $book)
-    {
-        if ($book->bookItems()->count() > 0) {
-            return redirect()
-                ->route('books.index')
-                ->with('error_title', 'Buku tidak bisa dihapus')
-                ->with('error_message', 'Buku "' . $book->title . '" masih memiliki data eksemplar.')
-                ->with('error_detail', 'Hapus eksemplar buku terlebih dahulu sebelum menghapus buku induk.');
-        }
+    public function destroy(\App\Models\Book $book)
+{
+    if (!auth()->check() || (int) auth()->user()->role_id !== 1) {
+        abort(403, 'Anda tidak memiliki akses.');
+    }
 
-        $title = $book->title;
+    $bookTitle = $book->title ?? 'Buku';
 
+    $bookItemsCount = method_exists($book, 'bookItems')
+        ? $book->bookItems()->count()
+        : 0;
+
+    if ($bookItemsCount > 0) {
+        return redirect()
+            ->route('books.index')
+            ->with('error_title', 'Buku tidak bisa dihapus')
+            ->with('error_message', 'Buku "' . $bookTitle . '" masih memiliki ' . $bookItemsCount . ' eksemplar.')
+            ->with('error_detail', 'Hapus eksemplarnya terlebih dahulu melalui halaman Stok Fisik / Eksemplar.');
+    }
+
+    try {
         $book->delete();
 
         return redirect()
             ->route('books.index')
-            ->with('success_title', 'Buku induk berhasil dihapus')
-            ->with('success_message', 'Buku "' . $title . '" berhasil dihapus dari katalog.')
-            ->with('success_detail', 'Data buku tidak akan tampil lagi pada daftar buku induk.');
+            ->with('success_title', 'Buku berhasil dihapus')
+            ->with('success_message', 'Buku "' . $bookTitle . '" berhasil dihapus.')
+            ->with('success_detail', 'Buku ini belum memiliki eksemplar, jadi aman dihapus.');
+    } catch (QueryException $exception) {
+        return redirect()
+            ->route('books.index')
+            ->with('error_title', 'Buku gagal dihapus')
+            ->with('error_message', 'Buku "' . $bookTitle . '" masih terhubung dengan data lain.')
+            ->with('error_detail', 'Periksa kembali data yang masih terhubung dengan buku ini.');
     }
+}
 
     private function syncBookItemsFromBook(Book $book): array
     {

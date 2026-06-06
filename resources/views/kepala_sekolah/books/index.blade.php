@@ -5,9 +5,11 @@
                 <p class="text-xs font-bold uppercase tracking-[0.18em] text-emerald-700">
                     Data Koleksi
                 </p>
+
                 <h2 class="mt-1 text-xl font-bold text-gray-900">
                     Katalog Buku Induk
                 </h2>
+
                 <p class="mt-1 text-sm text-gray-500">
                     Halaman ini bersifat read-only untuk Kepala Sekolah/Kepala Perpustakaan.
                 </p>
@@ -26,20 +28,22 @@
         $bookCount = method_exists($books, 'total') ? $books->total() : $bookCollection->count();
     @endphp
 
-    <div class="py-10 bg-gradient-to-br from-slate-50 via-emerald-50/40 to-sky-50/40 min-h-screen">
-        <div class="max-w-7xl mx-auto sm:px-6 lg:px-8">
+    <div class="min-h-screen bg-gradient-to-br from-slate-50 via-emerald-50/40 to-sky-50/40 py-10">
+        <div class="mx-auto max-w-7xl sm:px-6 lg:px-8">
 
             <div class="overflow-hidden rounded-[2rem] border border-white/70 bg-white/80 shadow-[0_18px_50px_rgba(15,23,42,0.06)] backdrop-blur-xl">
+
                 <div class="relative overflow-hidden bg-gradient-to-r from-emerald-700 to-teal-500 p-6">
                     <div class="absolute -right-16 -top-20 h-52 w-52 rounded-full bg-white/10 blur-2xl"></div>
                     <div class="absolute -left-20 bottom-0 h-48 w-48 rounded-full bg-emerald-200/20 blur-2xl"></div>
 
                     <div class="relative flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
                         <div>
-                            <h3 class="text-white text-lg font-semibold">
+                            <h3 class="text-lg font-semibold text-white">
                                 Daftar Buku Induk
                             </h3>
-                            <p class="text-emerald-50 mt-1 text-sm">
+
+                            <p class="mt-1 text-sm text-emerald-50">
                                 Kepala sekolah hanya dapat melihat data koleksi tanpa mengubah data.
                             </p>
                         </div>
@@ -48,9 +52,15 @@
                             <div class="flex h-10 w-10 items-center justify-center rounded-xl bg-white/20">
                                 <span class="material-symbols-outlined">library_books</span>
                             </div>
+
                             <div>
-                                <p class="text-xs text-emerald-50">Total Buku Induk</p>
-                                <p class="text-lg font-bold">{{ number_format($bookCount, 0, ',', '.') }}</p>
+                                <p class="text-xs text-emerald-50">
+                                    Total Buku Induk
+                                </p>
+
+                                <p class="text-lg font-bold">
+                                    {{ number_format($bookCount, 0, ',', '.') }}
+                                </p>
                             </div>
                         </div>
                     </div>
@@ -58,54 +68,97 @@
 
                 <div class="p-6">
                     <div class="overflow-x-auto rounded-3xl border border-gray-100 bg-white">
-                        <table class="min-w-[1100px] w-full divide-y divide-gray-100 text-left text-sm">
+                        <table class="w-full min-w-[1100px] divide-y divide-gray-100 text-left text-sm">
                             <thead class="bg-slate-50 text-xs uppercase tracking-wider text-gray-500">
                                 <tr>
-                                    <th class="px-5 py-4 font-bold w-[280px]">Judul</th>
-                                    <th class="px-5 py-4 font-bold w-[160px]">Penulis</th>
-                                    <th class="px-5 py-4 font-bold w-[160px]">Penerbit</th>
-                                    <th class="px-5 py-4 font-bold w-[170px]">Kategori</th>
-                                    <th class="px-5 py-4 text-center font-bold w-[100px]">DDC</th>
-                                    <th class="px-5 py-4 text-center font-bold w-[120px]">Stok</th>
-                                    <th class="px-5 py-4 text-center font-bold w-[160px]">Status</th>
-                                    <th class="px-5 py-4 text-center font-bold w-[120px]">Aksi</th>
+                                    <th class="w-[280px] px-5 py-4 font-bold">
+                                        Judul
+                                    </th>
+
+                                    <th class="w-[160px] px-5 py-4 font-bold">
+                                        Penulis
+                                    </th>
+
+                                    <th class="w-[160px] px-5 py-4 font-bold">
+                                        Penerbit
+                                    </th>
+
+                                    <th class="w-[170px] px-5 py-4 font-bold">
+                                        Kategori
+                                    </th>
+
+                                    <th class="w-[100px] px-5 py-4 text-center font-bold">
+                                        DDC
+                                    </th>
+
+                                    <th class="w-[120px] px-5 py-4 text-center font-bold">
+                                        Stok
+                                    </th>
+
+                                    <th class="w-[160px] px-5 py-4 text-center font-bold">
+                                        Status
+                                    </th>
+
+                                    <th class="w-[120px] px-5 py-4 text-center font-bold">
+                                        Aksi
+                                    </th>
                                 </tr>
                             </thead>
 
                             <tbody class="divide-y divide-gray-100 bg-white">
                                 @forelse($books as $book)
                                     @php
-                                        $stockCount = $book->book_items_count ?? $book->bookItems()->count();
+                                        $stockCount = method_exists($book, 'bookItems')
+                                            ? $book->bookItems()
+                                                ->where(function ($query) {
+                                                    $query->whereNull('status')
+                                                        ->orWhere('status', '!=', 'nonaktif');
+                                                })
+                                                ->count()
+                                            : ($book->book_items_count ?? $book->stock ?? 0);
+
+                                        $isBorrowable = (bool) ($book->is_borrowable ?? true);
                                     @endphp
 
                                     <tr class="transition hover:bg-emerald-50/40">
                                         <td class="px-5 py-5 align-middle">
                                             <div class="max-w-[260px]">
                                                 <p class="font-bold leading-5 text-gray-900">
-                                                    {{ $book->title }}
+                                                    {{ $book->title ?? '-' }}
                                                 </p>
+
                                                 <p class="mt-1 text-xs text-gray-500">
                                                     Tahun Terbit: {{ $book->publication_year ?? '-' }}
                                                 </p>
+
+                                                @if($book->title_code ?? $book->title_initial ?? null)
+                                                    <span class="mt-2 inline-flex rounded-full border border-emerald-100 bg-emerald-50 px-3 py-1 text-[11px] font-bold text-emerald-700">
+                                                        {{ $book->title_code ?? $book->title_initial }}
+                                                    </span>
+                                                @endif
                                             </div>
                                         </td>
 
                                         <td class="px-5 py-5 align-middle text-gray-700">
-                                            {{ $book->author ?? '-' }}
+                                            <div class="max-w-[150px] leading-5">
+                                                {{ $book->author ?? '-' }}
+                                            </div>
                                         </td>
 
                                         <td class="px-5 py-5 align-middle text-gray-700">
-                                            {{ $book->publisher ?? '-' }}
+                                            <div class="max-w-[150px] leading-5">
+                                                {{ $book->publisher ?? '-' }}
+                                            </div>
                                         </td>
 
                                         <td class="px-5 py-5 align-middle">
-                                            <span class="inline-flex rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-xs font-bold text-emerald-700">
+                                            <span class="inline-flex max-w-[160px] items-center rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-xs font-bold leading-4 text-emerald-700">
                                                 {{ $book->category->name ?? '-' }}
                                             </span>
                                         </td>
 
                                         <td class="px-5 py-5 text-center align-middle">
-                                            <span class="inline-flex rounded-full border border-sky-200 bg-sky-50 px-3 py-1.5 text-xs font-bold text-sky-700">
+                                            <span class="inline-flex items-center rounded-full border border-sky-200 bg-sky-50 px-3 py-1.5 text-xs font-bold text-sky-700">
                                                 {{ $book->ddcClass->code ?? '-' }}
                                             </span>
                                         </td>
@@ -115,20 +168,21 @@
                                                 <span class="text-lg font-extrabold text-emerald-800">
                                                     {{ number_format($stockCount, 0, ',', '.') }}
                                                 </span>
+
                                                 <span class="text-[10px] font-bold uppercase tracking-wider text-emerald-700">
-                                                    Copy
+                                                    Copy Aktif
                                                 </span>
                                             </span>
                                         </td>
 
                                         <td class="px-5 py-5 text-center align-middle">
-                                            @if($book->is_borrowable)
-                                                <span class="inline-flex items-center gap-1.5 rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-xs font-bold text-emerald-700">
+                                            @if($isBorrowable)
+                                                <span class="inline-flex items-center gap-1.5 whitespace-nowrap rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-xs font-bold text-emerald-700">
                                                     <span class="material-symbols-outlined text-[14px]">check_circle</span>
                                                     Bisa Dipinjam
                                                 </span>
                                             @else
-                                                <span class="inline-flex items-center gap-1.5 rounded-full border border-amber-200 bg-amber-50 px-3 py-1.5 text-xs font-bold text-amber-700">
+                                                <span class="inline-flex items-center gap-1.5 whitespace-nowrap rounded-full border border-amber-200 bg-amber-50 px-3 py-1.5 text-xs font-bold text-amber-700">
                                                     <span class="material-symbols-outlined text-[14px]">visibility</span>
                                                     Baca di Tempat
                                                 </span>
@@ -149,8 +203,13 @@
                                             <div class="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-emerald-50 text-emerald-600">
                                                 <span class="material-symbols-outlined">menu_book</span>
                                             </div>
+
                                             <p class="mt-4 text-sm font-semibold text-gray-700">
                                                 Belum ada buku dalam katalog.
+                                            </p>
+
+                                            <p class="mt-1 text-xs text-gray-500">
+                                                Belum ada data buku yang dapat ditampilkan.
                                             </p>
                                         </td>
                                     </tr>

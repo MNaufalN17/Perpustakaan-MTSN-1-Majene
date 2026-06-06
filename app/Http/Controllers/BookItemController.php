@@ -4,329 +4,518 @@ namespace App\Http\Controllers;
 
 use App\Models\Book;
 use App\Models\BookItem;
+use Illuminate\Database\QueryException;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Schema;
+use Illuminate\Support\Str;
 use Illuminate\Validation\Rule;
-use Illuminate\Validation\ValidationException;
 
 class BookItemController extends Controller
 {
-    public function index()
-    {
-        $books = Book::with(['category', 'ddcClass'])
-            ->withCount('bookItems')
-            ->latest()
-            ->paginate(10);
+    private array $activeLoanStatuses = ['aktif', 'terlambat'];
 
-        return view('pustakawan.book_items.index', compact('books'));
+    private array $activeLoanItemStatuses = ['dipinjam', 'terlambat'];
+
+    public function index(Request $request)
+    {
+        if (!auth()->check() || (int) auth()->user()->role_id !== 1) {
+            abort(403, 'Anda tidak memiliki akses.');
+        }
+
+        $keyword = trim((string) $request->input('keyword', ''));
+        $status = trim((string) $request->input('status', ''));
+        $condition = trim((string) $request->input('condition', ''));
+
+        $bookItems = BookItem::with([
+                'book.category',
+                'book.ddcClass',
+                'activeLoanItem.loan.member',
+            ])
+            ->withCount('loanItems')
+            ->when($keyword !== '', function ($query) use ($keyword) {
+                $query->where(function ($subQuery) use ($keyword) {
+                    $subQuery->where('item_code', 'like', "%{$keyword}%")
+                        ->orWhere('classification_code', 'like', "%{$keyword}%")
+                        ->orWhere('author_code', 'like', "%{$keyword}%")
+                        ->orWhere('title_code', 'like', "%{$keyword}%")
+                        ->orWhere('location', 'like', "%{$keyword}%")
+                        ->orWhereHas('book', function ($bookQuery) use ($keyword) {
+                            $bookQuery->where('title', 'like', "%{$keyword}%")
+                                ->orWhere('author', 'like', "%{$keyword}%")
+                                ->orWhere('publisher', 'like', "%{$keyword}%");
+                        });
+                });
+            })
+            ->when($status !== '', function ($query) use ($status) {
+                $query->where('status', $status);
+            })
+            ->when($condition !== '', function ($query) use ($condition) {
+                $query->where('condition', $condition);
+            })
+            ->orderBy('item_code')
+            ->paginate(10)
+            ->withQueryString();
+
+        return view('pustakawan.book_items.index', compact(
+            'bookItems',
+            'keyword',
+            'status',
+            'condition'
+        ));
     }
 
     public function create()
     {
+        if (!auth()->check() || (int) auth()->user()->role_id !== 1) {
+            abort(403, 'Anda tidak memiliki akses.');
+        }
+
         $books = Book::with(['category', 'ddcClass'])
             ->orderBy('title')
             ->get();
 
-        $itemMaxCopies = BookItem::select('book_id', DB::raw('MAX(copy_number) as max_copy'))
-            ->groupBy('book_id')
-            ->pluck('max_copy', 'book_id');
+        $statusOptions = $this->statusOptions();
+        $conditionOptions = $this->conditionOptions();
 
-        $booksData = $books->map(function ($book) use ($itemMaxCopies) {
-            $lastCopyNumber = (int) ($itemMaxCopies[$book->id] ?? 0);
-
-            return [
-                'id' => $book->id,
-                'title' => $book->title,
-                'author' => $book->author,
-                'author_code' => $book->author_code ?: $this->makeAuthorCode($book->author),
-                'title_code' => $book->title_code ?: $this->makeTitleCode($book->title),
-                'publisher' => $book->publisher,
-                'publication_year' => $book->publication_year,
-                'category' => $book->category->name ?? '-',
-                'ddc_code' => $book->ddcClass->code ?? '000',
-                'next_index' => $lastCopyNumber + 1,
-            ];
-        })->values();
-
-        return view('pustakawan.book_items.create', compact('books', 'booksData'));
+        return view('pustakawan.book_items.create', compact(
+            'books',
+            'statusOptions',
+            'conditionOptions'
+        ));
     }
 
     public function store(Request $request)
     {
-        $validated = $request->validate([
-            'book_id' => ['required', 'exists:books,id'],
-            'items' => ['required', 'array', 'min:1', 'max:200'],
-            'items.*.copy_number' => ['required', 'integer', 'min:1'],
-            'items.*.status' => ['required', Rule::in(['tersedia', 'dipinjam', 'hilang', 'nonaktif'])],
-            'items.*.condition' => ['required', Rule::in(['baik', 'rusak ringan', 'rusak berat', 'hilang'])],
-        ], $this->validationMessages(), $this->validationAttributes());
-
-        $this->validateItemStatusCondition($validated['items']);
-
-        $book = Book::with('ddcClass')->findOrFail($validated['book_id']);
-
-        $classificationCode = $book->ddcClass->code ?? '000';
-        $authorCode = $book->author_code ?: $this->makeAuthorCode($book->author);
-        $titleCode = $book->title_code ?: $this->makeTitleCode($book->title);
-
-        $rows = collect($validated['items'])->map(function ($item) use ($classificationCode, $authorCode, $titleCode) {
-            $copyNumber = (int) $item['copy_number'];
-
-            return [
-                'copy_number' => $copyNumber,
-                'item_code' => $this->buildItemCode($classificationCode, $authorCode, $titleCode, $copyNumber),
-                'status' => $item['status'],
-                'condition' => $item['condition'],
-            ];
-        })->values();
-
-        $seenCodes = [];
-
-        foreach ($rows as $index => $row) {
-            if (in_array($row['item_code'], $seenCodes)) {
-                throw ValidationException::withMessages([
-                    "items.$index.copy_number" => 'Baris ke-' . ($index + 1) . ': nomor copy menghasilkan kode eksemplar yang sama dengan baris lain.',
-                ]);
-            }
-
-            $seenCodes[] = $row['item_code'];
-
-            if (BookItem::where('item_code', $row['item_code'])->exists()) {
-                throw ValidationException::withMessages([
-                    "items.$index.copy_number" => 'Baris ke-' . ($index + 1) . ': kode eksemplar "' . $row['item_code'] . '" sudah digunakan.',
-                ]);
-            }
+        if (!auth()->check() || (int) auth()->user()->role_id !== 1) {
+            abort(403, 'Anda tidak memiliki akses.');
         }
 
-        DB::transaction(function () use ($book, $rows, $classificationCode, $authorCode, $titleCode) {
-            foreach ($rows as $row) {
-                BookItem::create([
-                    'book_id' => $book->id,
-                    'classification_code' => $classificationCode,
-                    'author_code' => $authorCode,
-                    'title_code' => $titleCode,
-                    'title_initial' => $titleCode,
-                    'copy_number' => $row['copy_number'],
-                    'item_code' => $row['item_code'],
-                    'status' => $row['status'],
-                    'condition' => $row['condition'],
+        $validated = $request->validate([
+            'book_id' => ['required', 'integer', 'exists:books,id'],
+            'item_code' => ['nullable', 'string', 'max:100', 'unique:book_items,item_code'],
+            'classification_code' => ['nullable', 'string', 'max:100'],
+            'author_code' => ['nullable', 'string', 'max:100'],
+            'title_code' => ['nullable', 'string', 'max:100'],
+            'title_initial' => ['nullable', 'string', 'max:20'],
+            'copy_number' => ['nullable', 'integer', 'min:1'],
+            'status' => ['nullable', 'string', Rule::in(['tersedia', 'dipinjam', 'terlambat', 'rusak', 'hilang', 'nonaktif'])],
+            'condition' => ['nullable', 'string', Rule::in(['baik', 'rusak ringan', 'rusak berat', 'hilang'])],
+            'location' => ['nullable', 'string', 'max:255'],
+            'acquisition_date' => ['nullable', 'date'],
+        ], [
+            'book_id.required' => 'Buku induk wajib dipilih.',
+            'book_id.exists' => 'Buku induk yang dipilih tidak ditemukan.',
+            'item_code.unique' => 'Kode eksemplar sudah digunakan.',
+            'copy_number.integer' => 'Nomor copy harus berupa angka.',
+        ]);
+
+        $book = Book::with(['ddcClass'])->findOrFail($validated['book_id']);
+
+        $copyNumber = $validated['copy_number'] ?? $this->nextCopyNumber((int) $validated['book_id']);
+
+        $itemCode = trim((string) ($validated['item_code'] ?? ''));
+
+        if ($itemCode === '') {
+            $itemCode = $this->generateItemCode($book, $copyNumber, $validated);
+        }
+
+        if (BookItem::where('item_code', $itemCode)->exists()) {
+            return back()
+                ->withInput()
+                ->withErrors([
+                    'item_code' => 'Kode eksemplar "' . $itemCode . '" sudah digunakan.',
                 ]);
-            }
-        });
+        }
+
+        $condition = $validated['condition'] ?? 'baik';
+        $status = $validated['status'] ?? $this->statusFromCondition($condition);
+
+        $bookItem = BookItem::create($this->filterColumns('book_items', [
+            'book_id' => $validated['book_id'],
+            'item_code' => $itemCode,
+            'classification_code' => $validated['classification_code'] ?? null,
+            'author_code' => $validated['author_code'] ?? null,
+            'title_code' => $validated['title_code'] ?? null,
+            'title_initial' => $validated['title_initial'] ?? null,
+            'copy_number' => $copyNumber,
+            'status' => $status,
+            'condition' => $condition,
+            'location' => $validated['location'] ?? null,
+            'acquisition_date' => $validated['acquisition_date'] ?? null,
+        ]));
 
         return redirect()
             ->route('book_items.index')
             ->with('success_title', 'Eksemplar berhasil ditambahkan')
-            ->with('success_message', $rows->count() . ' eksemplar buku "' . $book->title . '" berhasil ditambahkan.')
-            ->with('success_detail', 'Kode eksemplar mengikuti Buku Induk. Status dan kondisi disimpan untuk masing-masing copy.');
+            ->with('success_message', 'Copy "' . ($bookItem->item_code ?? '-') . '" berhasil ditambahkan.')
+            ->with('success_detail', 'Eksemplar baru sudah masuk ke stok perpustakaan.');
     }
 
     public function show(BookItem $bookItem)
     {
-        $bookItem->load(['book.category', 'book.ddcClass', 'activeLoanItem.loan.member']);
+        if (!auth()->check() || (int) auth()->user()->role_id !== 1) {
+            abort(403, 'Anda tidak memiliki akses.');
+        }
+
+        $bookItem->load([
+            'book.category',
+            'book.ddcClass',
+            'loanItems.loan.member.studentClass',
+        ]);
 
         return view('pustakawan.book_items.show', compact('bookItem'));
     }
 
     public function edit(BookItem $bookItem)
     {
-        $bookItem->load(['book.category', 'book.ddcClass', 'activeLoanItem.loan.member']);
+        if (!auth()->check() || (int) auth()->user()->role_id !== 1) {
+            abort(403, 'Anda tidak memiliki akses.');
+        }
 
-        return view('pustakawan.book_items.edit', compact('bookItem'));
+        $bookItem->load(['book.category', 'book.ddcClass']);
+
+        $books = Book::with(['category', 'ddcClass'])
+            ->orderBy('title')
+            ->get();
+
+        $statusOptions = $this->statusOptions();
+        $conditionOptions = $this->conditionOptions();
+
+        return view('pustakawan.book_items.edit', compact(
+            'bookItem',
+            'books',
+            'statusOptions',
+            'conditionOptions'
+        ));
     }
 
     public function update(Request $request, BookItem $bookItem)
     {
-        $bookItem->load(['book.ddcClass', 'activeLoanItem.loan.member']);
-
-        $hasActiveLoan = $bookItem->activeLoanItem !== null;
+        if (!auth()->check() || (int) auth()->user()->role_id !== 1) {
+            abort(403, 'Anda tidak memiliki akses.');
+        }
 
         $validated = $request->validate([
-            'copy_number' => ['required', 'integer', 'min:1'],
-            'status' => ['required', Rule::in(['tersedia', 'dipinjam', 'hilang', 'nonaktif'])],
-            'condition' => ['required', Rule::in(['baik', 'rusak ringan', 'rusak berat', 'hilang'])],
-        ], $this->validationMessages(), $this->validationAttributes());
+            'book_id' => ['required', 'integer', 'exists:books,id'],
+            'item_code' => [
+                'required',
+                'string',
+                'max:100',
+                Rule::unique('book_items', 'item_code')->ignore($bookItem->id),
+            ],
+            'classification_code' => ['nullable', 'string', 'max:100'],
+            'author_code' => ['nullable', 'string', 'max:100'],
+            'title_code' => ['nullable', 'string', 'max:100'],
+            'title_initial' => ['nullable', 'string', 'max:20'],
+            'copy_number' => ['nullable', 'integer', 'min:1'],
+            'status' => ['required', 'string', Rule::in(['tersedia', 'dipinjam', 'terlambat', 'rusak', 'hilang', 'nonaktif'])],
+            'condition' => ['required', 'string', Rule::in(['baik', 'rusak ringan', 'rusak berat', 'hilang'])],
+            'location' => ['nullable', 'string', 'max:255'],
+            'acquisition_date' => ['nullable', 'date'],
+        ], [
+            'book_id.required' => 'Buku induk wajib dipilih.',
+            'item_code.required' => 'Kode eksemplar wajib diisi.',
+            'item_code.unique' => 'Kode eksemplar sudah digunakan.',
+        ]);
 
-        if ($hasActiveLoan) {
-            if ($validated['status'] !== 'dipinjam') {
-                return back()
-                    ->withInput()
-                    ->with('error_title', 'Status tidak bisa diubah dari stok buku')
-                    ->with('error_message', 'Eksemplar ini masih tercatat sedang dipinjam.')
-                    ->with('error_detail', 'Selesaikan pengembaliannya melalui halaman Peminjaman agar data transaksi dan stok buku tetap sesuai.');
-            }
-
-            if ((int) $validated['copy_number'] !== (int) $bookItem->copy_number) {
-                return back()
-                    ->withInput()
-                    ->with('error_title', 'Nomor copy tidak bisa diubah')
-                    ->with('error_message', 'Eksemplar ini masih berada dalam transaksi peminjaman aktif.')
-                    ->with('error_detail', 'Nomor copy dapat diubah setelah buku dikembalikan.');
-            }
+        if ($this->hasActiveLoan($bookItem) && !in_array($validated['status'], ['dipinjam', 'terlambat'], true)) {
+            return back()
+                ->withInput()
+                ->with('error_title', 'Status tidak bisa diubah')
+                ->with('error_message', 'Eksemplar ini sedang dipinjam.')
+                ->with('error_detail', 'Selesaikan pengembalian terlebih dahulu sebelum mengubah status eksemplar.');
         }
 
-        $this->validateSingleStatusCondition($validated['status'], $validated['condition']);
-
-        $book = $bookItem->book;
-
-        $classificationCode = $book->ddcClass->code ?? '000';
-        $authorCode = $book->author_code ?: $this->makeAuthorCode($book->author);
-        $titleCode = $book->title_code ?: $this->makeTitleCode($book->title);
-        $copyNumber = (int) $validated['copy_number'];
-
-        $itemCode = $this->buildItemCode($classificationCode, $authorCode, $titleCode, $copyNumber);
-
-        $exists = BookItem::where('item_code', $itemCode)
-            ->where('id', '!=', $bookItem->id)
-            ->exists();
-
-        if ($exists) {
-            throw ValidationException::withMessages([
-                'copy_number' => 'Nomor copy ini menghasilkan kode eksemplar "' . $itemCode . '" yang sudah digunakan.',
-            ]);
-        }
-
-        $bookItem->update([
-            'classification_code' => $classificationCode,
-            'author_code' => $authorCode,
-            'title_code' => $titleCode,
-            'title_initial' => $titleCode,
-            'copy_number' => $copyNumber,
-            'item_code' => $itemCode,
+        $bookItem->update($this->filterColumns('book_items', [
+            'book_id' => $validated['book_id'],
+            'item_code' => $validated['item_code'],
+            'classification_code' => $validated['classification_code'] ?? null,
+            'author_code' => $validated['author_code'] ?? null,
+            'title_code' => $validated['title_code'] ?? null,
+            'title_initial' => $validated['title_initial'] ?? null,
+            'copy_number' => $validated['copy_number'] ?? null,
             'status' => $validated['status'],
             'condition' => $validated['condition'],
-        ]);
+            'location' => $validated['location'] ?? null,
+            'acquisition_date' => $validated['acquisition_date'] ?? null,
+        ]));
 
         return redirect()
             ->route('book_items.index')
             ->with('success_title', 'Eksemplar berhasil diperbarui')
-            ->with('success_message', 'Data eksemplar "' . $bookItem->fresh()->item_code . '" berhasil diperbarui.')
-            ->with('success_detail', 'Data stok buku sudah diperbarui.');
+            ->with('success_message', 'Copy "' . ($bookItem->item_code ?? '-') . '" berhasil diperbarui.')
+            ->with('success_detail', 'Data eksemplar sudah tersimpan.');
     }
 
     public function destroy(BookItem $bookItem)
     {
-        if ($bookItem->hasActiveLoan()) {
-            return redirect()
-                ->route('book_items.index')
-                ->with('error_title', 'Eksemplar tidak bisa dihapus')
-                ->with('error_message', 'Eksemplar "' . $bookItem->item_code . '" masih berada dalam transaksi peminjaman aktif.')
-                ->with('error_detail', 'Selesaikan pengembalian terlebih dahulu sebelum menghapus eksemplar.');
+        if (!auth()->check() || (int) auth()->user()->role_id !== 1) {
+            abort(403, 'Anda tidak memiliki akses.');
         }
 
-        $itemCode = $bookItem->item_code;
+        $bookItem->load([
+            'book',
+            'loanItems.loan',
+        ]);
 
-        $bookItem->delete();
+        $itemCode = $bookItem->item_code ?? 'Eksemplar';
+
+        if ($this->hasActiveLoan($bookItem)) {
+            return redirect()
+                ->route('book_items.index')
+                ->with('error_title', 'Eksemplar tidak bisa diproses')
+                ->with('error_message', 'Copy "' . $itemCode . '" sedang dipinjam.')
+                ->with('error_detail', 'Selesaikan pengembalian terlebih dahulu sebelum copy ini dihapus atau dikeluarkan dari stok.');
+        }
+
+        $hasLoanHistory = $this->hasLoanHistory($bookItem);
+
+        if ($bookItem->status === 'nonaktif' && $hasLoanHistory) {
+            return redirect()
+                ->route('book_items.index')
+                ->with('error_title', 'Eksemplar sudah keluar dari stok')
+                ->with('error_message', 'Copy "' . $itemCode . '" sudah dikeluarkan dari stok.')
+                ->with('error_detail', 'Data copy tetap disimpan untuk menjaga riwayat transaksi.');
+        }
+
+        try {
+            if ($hasLoanHistory) {
+                $bookItem->update($this->filterColumns('book_items', [
+                    'status' => 'nonaktif',
+                ]));
+
+                return redirect()
+                    ->route('book_items.index')
+                    ->with('success_title', 'Eksemplar dikeluarkan dari stok')
+                    ->with('success_message', 'Copy "' . $itemCode . '" berhasil dikeluarkan dari stok.')
+                    ->with('success_detail', 'Copy ini tidak dihapus permanen karena pernah memiliki riwayat peminjaman.');
+            }
+
+            $bookItem->delete();
+
+            return redirect()
+                ->route('book_items.index')
+                ->with('success_title', 'Eksemplar berhasil dihapus')
+                ->with('success_message', 'Copy "' . $itemCode . '" berhasil dihapus permanen.')
+                ->with('success_detail', 'Copy ini belum memiliki riwayat peminjaman, sehingga aman dihapus.');
+        } catch (QueryException $exception) {
+            return redirect()
+                ->route('book_items.index')
+                ->with('error_title', 'Eksemplar gagal diproses')
+                ->with('error_message', 'Copy "' . $itemCode . '" masih terhubung dengan data lain.')
+                ->with('error_detail', 'Periksa kembali riwayat transaksi atau data terkait eksemplar ini.');
+        }
+    }
+
+    public function bulkDestroy(Request $request)
+    {
+        if (!auth()->check() || (int) auth()->user()->role_id !== 1) {
+            abort(403, 'Anda tidak memiliki akses.');
+        }
+
+        $bookItemIds = collect($request->input('book_item_ids', []))
+            ->filter()
+            ->map(fn ($id) => (int) $id)
+            ->unique()
+            ->values();
+
+        if ($bookItemIds->isEmpty()) {
+            return back()
+                ->withErrors([
+                    'book_item_ids' => 'Pilih minimal satu eksemplar yang ingin diproses.',
+                ])
+                ->withInput();
+        }
+
+        $bookItems = BookItem::with([
+                'book',
+                'loanItems.loan',
+            ])
+            ->whereIn('id', $bookItemIds)
+            ->get();
+
+        if ($bookItems->isEmpty()) {
+            return back()
+                ->with('error_title', 'Tidak ada eksemplar diproses')
+                ->with('error_message', 'Eksemplar yang dipilih tidak ditemukan.')
+                ->with('error_detail', 'Silakan refresh halaman lalu pilih kembali eksemplar.');
+        }
+
+        $blockedItems = $bookItems->filter(function ($bookItem) {
+            return $this->hasActiveLoan($bookItem);
+        });
+
+        if ($blockedItems->isNotEmpty()) {
+            return back()
+                ->with('error_title', 'Sebagian eksemplar tidak bisa diproses')
+                ->with('error_message', 'Ada eksemplar yang masih sedang dipinjam.')
+                ->with('error_detail', 'Selesaikan pengembalian terlebih dahulu sebelum eksemplar tersebut diproses.');
+        }
+
+        $deletedCount = 0;
+        $outOfStockCount = 0;
+        $skippedCount = 0;
+
+        DB::transaction(function () use ($bookItems, &$deletedCount, &$outOfStockCount, &$skippedCount) {
+            foreach ($bookItems as $bookItem) {
+                $hasLoanHistory = $this->hasLoanHistory($bookItem);
+
+                if ($bookItem->status === 'nonaktif' && $hasLoanHistory) {
+                    $skippedCount++;
+                    continue;
+                }
+
+                if ($hasLoanHistory) {
+                    $bookItem->update($this->filterColumns('book_items', [
+                        'status' => 'nonaktif',
+                    ]));
+
+                    $outOfStockCount++;
+                    continue;
+                }
+
+                $bookItem->delete();
+                $deletedCount++;
+            }
+        });
+
+        $messageParts = [];
+
+        if ($deletedCount > 0) {
+            $messageParts[] = $deletedCount . ' eksemplar dihapus permanen';
+        }
+
+        if ($outOfStockCount > 0) {
+            $messageParts[] = $outOfStockCount . ' eksemplar dikeluarkan dari stok';
+        }
+
+        if ($skippedCount > 0) {
+            $messageParts[] = $skippedCount . ' eksemplar dilewati karena sudah keluar dari stok';
+        }
+
+        if (empty($messageParts)) {
+            return redirect()
+                ->route('book_items.index')
+                ->with('error_title', 'Tidak ada eksemplar diproses')
+                ->with('error_message', 'Tidak ada perubahan pada eksemplar yang dipilih.')
+                ->with('error_detail', 'Pilih eksemplar lain yang masih bisa diproses.');
+        }
 
         return redirect()
             ->route('book_items.index')
-            ->with('success_title', 'Eksemplar berhasil dihapus')
-            ->with('success_message', 'Eksemplar "' . $itemCode . '" berhasil dihapus dari sistem.')
-            ->with('success_detail', 'Data tersebut tidak akan tampil lagi pada stok fisik buku.');
+            ->with('success_title', 'Eksemplar berhasil diproses')
+            ->with('success_message', implode(', ', $messageParts) . '.')
+            ->with('success_detail', 'Eksemplar yang pernah memiliki riwayat peminjaman tidak dihapus permanen agar riwayat transaksi tetap aman.');
     }
 
-    private function validateItemStatusCondition(array $items): void
+    private function hasActiveLoan(BookItem $bookItem): bool
     {
-        $messages = [];
+        return $bookItem->loanItems()
+            ->whereIn('status', $this->activeLoanItemStatuses)
+            ->whereHas('loan', function ($query) {
+                $query->whereIn('status', $this->activeLoanStatuses);
+            })
+            ->exists();
+    }
 
-        foreach ($items as $index => $item) {
-            $row = $index + 1;
-            $status = $item['status'] ?? null;
-            $condition = $item['condition'] ?? null;
-
-            if ($condition === 'hilang' && $status !== 'hilang') {
-                $messages["items.$index.status"] = "Baris ke-$row: jika kondisi fisik hilang, status eksemplar harus hilang.";
-            }
-
-            if ($status === 'hilang' && $condition !== 'hilang') {
-                $messages["items.$index.condition"] = "Baris ke-$row: jika status hilang, kondisi fisik juga harus hilang.";
-            }
+    private function hasLoanHistory(BookItem $bookItem): bool
+    {
+        if ($bookItem->relationLoaded('loanItems')) {
+            return $bookItem->loanItems->isNotEmpty();
         }
 
-        if (!empty($messages)) {
-            throw ValidationException::withMessages($messages);
-        }
+        return $bookItem->loanItems()->exists();
     }
 
-    private function validateSingleStatusCondition(string $status, string $condition): void
+    private function nextCopyNumber(int $bookId): int
     {
-        $messages = [];
+        $lastCopyNumber = (int) BookItem::where('book_id', $bookId)
+            ->max('copy_number');
 
-        if ($condition === 'hilang' && $status !== 'hilang') {
-            $messages['status'] = 'Jika kondisi fisik hilang, status eksemplar harus hilang.';
+        return $lastCopyNumber + 1;
+    }
+
+    private function generateItemCode(Book $book, int $copyNumber, array $payload = []): string
+    {
+        $classificationCode = $payload['classification_code']
+            ?? $book->ddcClass?->code
+            ?? $book->classification_code
+            ?? 'BK';
+
+        $authorCode = $payload['author_code']
+            ?? Str::title(Str::substr(preg_replace('/[^A-Za-z0-9]/', '', (string) ($book->author ?? 'UNK')), 0, 4));
+
+        $titleCode = $payload['title_code']
+            ?? Str::lower(Str::substr(preg_replace('/[^A-Za-z0-9]/', '', (string) ($book->title ?? 'B')), 0, 1));
+
+        $classificationCode = $this->cleanCode($classificationCode, 'BK');
+        $authorCode = $this->cleanCode($authorCode, 'UNK');
+        $titleCode = $this->cleanCode($titleCode, 'b');
+
+        $baseCode = $classificationCode . '-' . $authorCode . '-' . $titleCode;
+
+        $itemCode = $baseCode . '-' . str_pad((string) $copyNumber, 3, '0', STR_PAD_LEFT);
+
+        while (BookItem::where('item_code', $itemCode)->exists()) {
+            $copyNumber++;
+            $itemCode = $baseCode . '-' . str_pad((string) $copyNumber, 3, '0', STR_PAD_LEFT);
         }
 
-        if ($status === 'hilang' && $condition !== 'hilang') {
-            $messages['condition'] = 'Jika status hilang, kondisi fisik juga harus hilang.';
+        return $itemCode;
+    }
+
+    private function cleanCode(?string $value, string $fallback): string
+    {
+        $value = trim((string) $value);
+
+        if ($value === '') {
+            return $fallback;
         }
 
-        if (!empty($messages)) {
-            throw ValidationException::withMessages($messages);
-        }
+        $value = preg_replace('/\s+/', '', $value);
+        $value = preg_replace('/[^A-Za-z0-9\-]/', '', $value);
+
+        return $value !== '' ? $value : $fallback;
     }
 
-    private function buildItemCode(string $classificationCode, string $authorCode, string $titleCode, int $copyNumber): string
+    private function statusFromCondition(string $condition): string
     {
-        return $classificationCode . '-' . $authorCode . '-' . $titleCode . '-' . str_pad($copyNumber, 3, '0', STR_PAD_LEFT);
+        return match ($condition) {
+            'hilang' => 'hilang',
+            'rusak ringan', 'rusak berat' => 'rusak',
+            default => 'tersedia',
+        };
     }
 
-    private function makeAuthorCode(?string $author): string
+    private function filterColumns(string $table, array $payload): array
     {
-        $letters = preg_replace('/[^a-zA-Z]/', '', $author ?? '');
-
-        return $letters ? ucfirst(strtolower(substr($letters, 0, 3))) : 'Pen';
+        return collect($payload)
+            ->filter(function ($value, $column) use ($table) {
+                return Schema::hasColumn($table, $column);
+            })
+            ->toArray();
     }
 
-    private function makeTitleCode(?string $title): string
-    {
-        $letters = preg_replace('/[^a-zA-Z0-9]/', '', $title ?? '');
-
-        return $letters ? strtolower(substr($letters, 0, 1)) : 'b';
-    }
-
-    private function validationMessages(): array
+    private function statusOptions(): array
     {
         return [
-            'book_id.required' => 'Judul buku induk wajib dipilih.',
-            'book_id.exists' => 'Buku induk yang dipilih tidak tersedia.',
-
-            'items.required' => 'Minimal satu data eksemplar wajib dibuat.',
-            'items.array' => 'Format data eksemplar tidak valid.',
-            'items.min' => 'Minimal satu data eksemplar wajib dibuat.',
-            'items.max' => 'Maksimal 200 eksemplar dalam satu kali simpan.',
-
-            'items.*.copy_number.required' => 'Nomor copy wajib diisi.',
-            'items.*.copy_number.integer' => 'Nomor copy harus berupa angka.',
-            'items.*.copy_number.min' => 'Nomor copy minimal 1.',
-
-            'items.*.status.required' => 'Status eksemplar wajib dipilih.',
-            'items.*.status.in' => 'Status eksemplar yang dipilih tidak valid.',
-
-            'items.*.condition.required' => 'Kondisi fisik wajib dipilih.',
-            'items.*.condition.in' => 'Kondisi fisik yang dipilih tidak valid.',
-
-            'copy_number.required' => 'Nomor copy wajib diisi.',
-            'copy_number.integer' => 'Nomor copy harus berupa angka.',
-            'copy_number.min' => 'Nomor copy minimal 1.',
-
-            'status.required' => 'Status eksemplar wajib dipilih.',
-            'status.in' => 'Status eksemplar yang dipilih tidak valid.',
-
-            'condition.required' => 'Kondisi fisik wajib dipilih.',
-            'condition.in' => 'Kondisi fisik yang dipilih tidak valid.',
+            'tersedia' => 'Tersedia',
+            'dipinjam' => 'Dipinjam',
+            'terlambat' => 'Terlambat',
+            'rusak' => 'Rusak',
+            'hilang' => 'Hilang',
+            'nonaktif' => 'Dikeluarkan dari Stok',
         ];
     }
 
-    private function validationAttributes(): array
+    private function conditionOptions(): array
     {
         return [
-            'book_id' => 'Buku induk',
-            'copy_number' => 'Nomor copy',
-            'status' => 'Status eksemplar',
-            'condition' => 'Kondisi fisik',
-            'items.*.copy_number' => 'Nomor copy',
-            'items.*.status' => 'Status eksemplar',
-            'items.*.condition' => 'Kondisi fisik',
+            'baik' => 'Baik',
+            'rusak ringan' => 'Rusak Ringan',
+            'rusak berat' => 'Rusak Berat',
+            'hilang' => 'Hilang',
         ];
     }
 }

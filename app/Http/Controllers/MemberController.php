@@ -9,6 +9,7 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Validation\Rule;
 use Illuminate\Validation\ValidationException;
+use Illuminate\Support\Facades\Validator;
 
 class MemberController extends Controller
 {
@@ -104,7 +105,7 @@ class MemberController extends Controller
         }
 
         foreach ($validated['members'] as $member) {
-            \App\Models\Member::create([
+            Member::create([
                 'member_code' => $this->generateMemberCode($member['member_type']),
                 'nis_nip' => trim($member['nis_nip']),
                 'name' => trim($member['name']),
@@ -133,7 +134,7 @@ class MemberController extends Controller
         'gender' => ['required', 'in:laki-laki,perempuan'],
         'student_class_id' => ['nullable', 'exists:classes,id'],
         'phone' => ['nullable', 'string', 'max:30'],
-        'status' => ['required', 'in:aktif,nonaktif'],
+        'status' => ['nullable', 'in:aktif,nonaktif'],
         'card_image' => ['nullable', 'image', 'mimes:jpg,jpeg,png,webp', 'max:2048'],
     ], [
         'nis_nip.required' => 'NIS / NIP wajib diisi.',
@@ -144,7 +145,6 @@ class MemberController extends Controller
         'gender.required' => 'Jenis kelamin wajib dipilih.',
         'gender.in' => 'Jenis kelamin tidak valid.',
         'student_class_id.exists' => 'Kelas yang dipilih tidak tersedia.',
-        'status.required' => 'Status keanggotaan wajib dipilih.',
         'status.in' => 'Status anggota tidak valid.',
         'card_image.image' => 'File kartu anggota harus berupa gambar.',
         'card_image.mimes' => 'Kartu anggota harus berformat JPG, JPEG, PNG, atau WEBP.',
@@ -152,6 +152,16 @@ class MemberController extends Controller
     ]);
 
     if ($validated['member_type'] === 'siswa' && empty($validated['student_class_id'])) {
+        if ($request->expectsJson() || $request->ajax() || $request->wantsJson()) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Kelas wajib dipilih untuk anggota siswa.',
+                'errors' => [
+                    'student_class_id' => ['Kelas wajib dipilih untuk anggota siswa.'],
+                ],
+            ], 422);
+        }
+
         return back()
             ->withInput()
             ->withErrors([
@@ -165,7 +175,7 @@ class MemberController extends Controller
         $cardImagePath = $request->file('card_image')->store('member-cards', 'public');
     }
 
-    $member = \App\Models\Member::create([
+    $member = Member::create([
         'member_code' => $this->generateMemberCode($validated['member_type']),
         'nis_nip' => trim($validated['nis_nip']),
         'name' => trim($validated['name']),
@@ -175,9 +185,30 @@ class MemberController extends Controller
             ? $validated['student_class_id']
             : null,
         'phone' => !empty($validated['phone']) ? trim($validated['phone']) : null,
-        'status' => $validated['status'],
+        'status' => $validated['status'] ?? 'aktif',
         'card_image' => $cardImagePath,
     ]);
+
+    $member->load('studentClass');
+
+    if ($request->expectsJson() || $request->ajax() || $request->wantsJson()) {
+        return response()->json([
+            'success' => true,
+            'message' => 'Anggota berhasil didaftarkan.',
+            'member' => [
+                'id' => $member->id,
+                'member_code' => $member->member_code,
+                'nis_nip' => $member->nis_nip,
+                'name' => $member->name,
+                'member_type' => $member->member_type,
+                'gender' => $member->gender,
+                'student_class_id' => $member->student_class_id,
+                'student_class' => $member->studentClass->class_name ?? null,
+                'text' => $member->name . ' - ' . $member->nis_nip,
+            ],
+            'class_name' => $member->studentClass->class_name ?? 'Guru/Staff',
+        ], 201);
+    }
 
     return redirect()
         ->route('members.show', $member)
@@ -428,4 +459,83 @@ class MemberController extends Controller
             'members.*.status' => 'Status keanggotaan',
         ];
     }
+
+    public function quickStore(Request $request)
+{
+    if (!auth()->check() || (int) auth()->user()->role_id !== 1) {
+        return response()->json([
+            'success' => false,
+            'message' => 'Anda tidak memiliki akses untuk menambahkan anggota.',
+        ], 403);
+    }
+
+    $validator = Validator::make($request->all(), [
+        'nis_nip' => ['required', 'string', 'max:50', 'unique:members,nis_nip'],
+        'name' => ['required', 'string', 'max:255'],
+        'gender' => ['required', 'in:laki-laki,perempuan'],
+        'member_type' => ['required', 'in:siswa,guru'],
+        'student_class_id' => ['nullable', 'exists:classes,id'],
+        'phone' => ['nullable', 'string', 'max:30'],
+    ], [
+        'nis_nip.required' => 'NIS/NIP wajib diisi.',
+        'nis_nip.unique' => 'NIS/NIP sudah terdaftar.',
+        'name.required' => 'Nama lengkap wajib diisi.',
+        'gender.required' => 'Jenis kelamin wajib dipilih.',
+        'gender.in' => 'Jenis kelamin tidak valid.',
+        'member_type.required' => 'Tipe anggota wajib dipilih.',
+        'member_type.in' => 'Tipe anggota tidak valid.',
+        'student_class_id.exists' => 'Kelas siswa tidak valid.',
+    ]);
+
+    if ($validator->fails()) {
+        return response()->json([
+            'success' => false,
+            'message' => $validator->errors()->first(),
+            'errors' => $validator->errors(),
+        ], 422);
+    }
+
+    if ($request->member_type === 'siswa' && !$request->student_class_id) {
+        return response()->json([
+            'success' => false,
+            'message' => 'Kelas siswa wajib dipilih untuk anggota siswa.',
+            'errors' => [
+                'student_class_id' => ['Kelas siswa wajib dipilih untuk anggota siswa.'],
+            ],
+        ], 422);
+    }
+
+    $member = Member::create([
+        'member_code' => $this->generateMemberCode($request->member_type),
+        'nis_nip' => trim($request->nis_nip),
+        'name' => trim($request->name),
+        'member_type' => $request->member_type,
+        'gender' => $request->gender,
+        'student_class_id' => $request->member_type === 'siswa'
+            ? $request->student_class_id
+            : null,
+        'phone' => $request->phone ? trim($request->phone) : null,
+        'status' => 'aktif',
+        'card_image' => null,
+    ]);
+
+    $member->load('studentClass');
+
+    return response()->json([
+        'success' => true,
+        'message' => 'Anggota berhasil didaftarkan.',
+        'member' => [
+            'id' => $member->id,
+            'member_code' => $member->member_code,
+            'nis_nip' => $member->nis_nip,
+            'name' => $member->name,
+            'member_type' => $member->member_type,
+            'gender' => $member->gender,
+            'student_class_id' => $member->student_class_id,
+            'student_class' => $member->studentClass->class_name ?? null,
+            'text' => $member->name . ' - ' . $member->nis_nip,
+        ],
+        'class_name' => $member->studentClass->class_name ?? 'Guru/Staff',
+    ], 201);
+}
 }
