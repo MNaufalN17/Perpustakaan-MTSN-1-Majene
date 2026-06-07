@@ -214,16 +214,7 @@
                                             default => 'border-gray-200 bg-gray-50 text-gray-600',
                                         };
 
-                                        $bookIds = $loan->loanItems
-                                            ->map(fn ($loanItem) => $loanItem->bookItem?->book_id)
-                                            ->filter()
-                                            ->unique()
-                                            ->values();
-
-                                        $isClassLoan = str_contains(
-                                            strtolower((string) ($loan->notes ?? '')),
-                                            'peminjaman kelas/rombongan'
-                                        ) || ($loan->loanItems->count() > 1 && $bookIds->count() === 1);
+                                        $isClassLoan = ($loan->loan_type ?? 'regular') === 'class_bulk';
 
                                         $rowClass = $isClassLoan
                                             ? 'bg-amber-100/80 hover:bg-amber-200/70'
@@ -238,7 +229,7 @@
                                             : 'border-slate-200 bg-slate-50 text-slate-600';
 
                                         $loanTypeDescription = $isClassLoan
-                                            ? 'Diwakili 1 anggota untuk beberapa eksemplar buku yang sama.'
+                                            ? 'Data tipe disimpan permanen sebagai peminjaman kelas.'
                                             : 'Transaksi mandiri anggota.';
 
                                         $canCancel = in_array($loan->status, ['aktif', 'terlambat'], true);
@@ -503,7 +494,7 @@
                             <p class="mt-1 text-sm text-gray-600">
                                 Tanggal pinjam:
                                 <span class="font-bold" x-text="cancelLoan.loan_date"></span>
-                                —
+                                sampai
                                 Batas kembali:
                                 <span class="font-bold" x-text="cancelLoan.due_date"></span>
                             </p>
@@ -665,15 +656,6 @@
                             event.preventDefault();
                             this.cancelError = 'Centang persetujuan pembatalan terlebih dahulu.';
                             return;
-                        }
-
-                        const confirmed = confirm(
-                            'Batalkan transaksi ' + this.cancelLoan.loan_code + '? ' +
-                            'Aksi ini hanya untuk transaksi salah input atau tidak jadi dipinjam.'
-                        );
-
-                        if (!confirmed) {
-                            event.preventDefault();
                         }
                     },
                 };

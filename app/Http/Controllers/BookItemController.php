@@ -19,9 +19,7 @@ class BookItemController extends Controller
 
     public function index(Request $request)
     {
-        if (!auth()->check() || (int) auth()->user()->role_id !== 1) {
-            abort(403, 'Anda tidak memiliki akses.');
-        }
+        $this->authorizeViewer();
 
         $keyword = trim((string) $request->input('keyword', ''));
         $status = trim((string) $request->input('status', ''));
@@ -30,7 +28,7 @@ class BookItemController extends Controller
         $bookItems = BookItem::with([
                 'book.category',
                 'book.ddcClass',
-                'activeLoanItem.loan.member',
+                'loanItems.loan.member',
             ])
             ->withCount('loanItems')
             ->when($keyword !== '', function ($query) use ($keyword) {
@@ -67,9 +65,7 @@ class BookItemController extends Controller
 
     public function create()
     {
-        if (!auth()->check() || (int) auth()->user()->role_id !== 1) {
-            abort(403, 'Anda tidak memiliki akses.');
-        }
+        $this->authorizePustakawan();
 
         $books = Book::with(['category', 'ddcClass'])
             ->orderBy('title')
@@ -100,9 +96,7 @@ class BookItemController extends Controller
 
     public function store(Request $request)
     {
-        if (!auth()->check() || (int) auth()->user()->role_id !== 1) {
-            abort(403, 'Anda tidak memiliki akses.');
-        }
+        $this->authorizePustakawan();
 
         if ($request->has('items')) {
             return $this->storeMany($request);
@@ -116,7 +110,7 @@ class BookItemController extends Controller
             'title_code' => ['nullable', 'string', 'max:100'],
             'title_initial' => ['nullable', 'string', 'max:20'],
             'copy_number' => ['nullable', 'integer', 'min:1'],
-            'status' => ['nullable', 'string', Rule::in(['tersedia', 'dipinjam', 'terlambat', 'rusak', 'hilang', 'nonaktif'])],
+            'status' => ['nullable', 'string', Rule::in(['tersedia', 'rusak', 'hilang', 'nonaktif'])],
             'condition' => ['nullable', 'string', Rule::in(['baik', 'rusak ringan', 'rusak berat', 'hilang'])],
             'location' => ['nullable', 'string', 'max:255'],
             'acquisition_date' => ['nullable', 'date'],
@@ -130,7 +124,15 @@ class BookItemController extends Controller
         $book = Book::with(['ddcClass'])->findOrFail($validated['book_id']);
         $codeParts = $this->bookCodeParts($book);
 
-        $copyNumber = $validated['copy_number'] ?? $this->nextCopyNumber((int) $validated['book_id']);
+        $copyNumber = (int) ($validated['copy_number'] ?? $this->nextCopyNumber((int) $validated['book_id']));
+
+        if ($this->copyNumberExists((int) $validated['book_id'], $copyNumber)) {
+            return back()
+                ->withInput()
+                ->withErrors([
+                    'copy_number' => 'Nomor copy ' . $copyNumber . ' sudah tersedia untuk buku ini.',
+                ]);
+        }
 
         $itemCode = trim((string) ($validated['item_code'] ?? ''));
 
@@ -142,12 +144,22 @@ class BookItemController extends Controller
             return back()
                 ->withInput()
                 ->withErrors([
-                    'item_code' => 'Kode eksemplar "' . $itemCode . '" sudah digunakan.',
+                    'item_code' => 'Kode eksemplar "' . $itemCode . '" sudah digunakan. Ubah kode klasifikasi/penulis/judul atau gunakan nomor copy lain.',
                 ]);
         }
 
-        $condition = $validated['condition'] ?? 'baik';
-        $status = $validated['status'] ?? $this->statusFromCondition($condition);
+        $condition = $this->normalizeCondition($validated['condition'] ?? 'baik');
+        $requestedStatus = strtolower(trim((string) ($validated['status'] ?? 'tersedia')));
+
+        if (! $this->isAllowedStatusConditionPair($requestedStatus, $condition, false)) {
+            return back()
+                ->withInput()
+                ->withErrors([
+                    'condition' => 'Kombinasi status dan kondisi tidak valid. Tersedia hanya boleh Baik, Rusak hanya boleh Rusak Ringan/Rusak Berat, Hilang hanya boleh Hilang.',
+                ]);
+        }
+
+        $status = $this->normalizeStatusForCondition($requestedStatus, $condition, false);
 
         $bookItem = BookItem::create($this->filterColumns('book_items', [
             'book_id' => $validated['book_id'],
@@ -176,7 +188,7 @@ class BookItemController extends Controller
             'book_id' => ['required', 'integer', 'exists:books,id'],
             'items' => ['required', 'array', 'min:1', 'max:200'],
             'items.*.copy_number' => ['required', 'integer', 'min:1', 'distinct'],
-            'items.*.status' => ['required', 'string', Rule::in(['tersedia', 'dipinjam', 'rusak', 'hilang', 'nonaktif'])],
+            'items.*.status' => ['required', 'string', Rule::in(['tersedia', 'rusak', 'hilang', 'nonaktif'])],
             'items.*.condition' => ['required', 'string', Rule::in(['baik', 'rusak ringan', 'rusak berat', 'hilang'])],
         ], [
             'book_id.required' => 'Buku induk wajib dipilih.',
@@ -192,17 +204,61 @@ class BookItemController extends Controller
         $codeParts = $this->bookCodeParts($book);
         $rows = collect($validated['items'])->values();
 
+        foreach ($rows as $index => $row) {
+            $requestedStatus = strtolower(trim((string) ($row['status'] ?? 'tersedia')));
+            $condition = $this->normalizeCondition($row['condition'] ?? 'baik');
+
+            if (! $this->isAllowedStatusConditionPair($requestedStatus, $condition, false)) {
+                return back()
+                    ->withInput()
+                    ->withErrors([
+                        "items.{$index}.condition" => 'Kombinasi status dan kondisi pada baris ke-' . ($index + 1) . ' tidak valid.',
+                    ]);
+            }
+        }
+
         $existingCopyNumbers = BookItem::where('book_id', $book->id)
             ->whereIn('copy_number', $rows->pluck('copy_number')->all())
             ->pluck('copy_number')
             ->map(fn ($copyNumber) => (int) $copyNumber)
             ->all();
 
-        if (!empty($existingCopyNumbers)) {
+        if (! empty($existingCopyNumbers)) {
             return back()
                 ->withInput()
                 ->withErrors([
                     'items' => 'Nomor copy ' . implode(', ', $existingCopyNumbers) . ' sudah tersedia untuk buku ini.',
+                ]);
+        }
+
+        $generatedItemCodes = $rows
+            ->map(function ($row) use ($book, $codeParts) {
+                return $this->generateItemCode($book, (int) $row['copy_number'], $codeParts);
+            })
+            ->values();
+
+        $duplicateItemCodes = $generatedItemCodes
+            ->duplicates()
+            ->values()
+            ->all();
+
+        if (! empty($duplicateItemCodes)) {
+            return back()
+                ->withInput()
+                ->withErrors([
+                    'items' => 'Ada kode eksemplar yang duplikat dalam input: ' . implode(', ', $duplicateItemCodes) . '.',
+                ]);
+        }
+
+        $existingItemCodes = BookItem::whereIn('item_code', $generatedItemCodes->all())
+            ->pluck('item_code')
+            ->all();
+
+        if (! empty($existingItemCodes)) {
+            return back()
+                ->withInput()
+                ->withErrors([
+                    'items' => 'Kode eksemplar ' . implode(', ', $existingItemCodes) . ' sudah digunakan. Item code tidak akan dinaikkan otomatis agar tetap selaras dengan nomor copy.',
                 ]);
         }
 
@@ -212,8 +268,9 @@ class BookItemController extends Controller
         DB::transaction(function () use ($book, $codeParts, $rows, &$createdCount, &$firstItemCode) {
             foreach ($rows as $row) {
                 $copyNumber = (int) $row['copy_number'];
-                $condition = $row['condition'];
-                $status = $row['status'] ?: $this->statusFromCondition($condition);
+                $condition = $this->normalizeCondition($row['condition']);
+                $requestedStatus = strtolower(trim((string) ($row['status'] ?? 'tersedia')));
+                $status = $this->normalizeStatusForCondition($requestedStatus, $condition, false);
                 $itemCode = $this->generateItemCode($book, $copyNumber, $codeParts);
 
                 $bookItem = BookItem::create($this->filterColumns('book_items', [
@@ -244,9 +301,7 @@ class BookItemController extends Controller
 
     public function show(BookItem $bookItem)
     {
-        if (!auth()->check() || (int) auth()->user()->role_id !== 1) {
-            abort(403, 'Anda tidak memiliki akses.');
-        }
+        $this->authorizeViewer();
 
         $bookItem->load([
             'book.category',
@@ -259,9 +314,7 @@ class BookItemController extends Controller
 
     public function edit(BookItem $bookItem)
     {
-        if (!auth()->check() || (int) auth()->user()->role_id !== 1) {
-            abort(403, 'Anda tidak memiliki akses.');
-        }
+        $this->authorizePustakawan();
 
         $bookItem->load(['book.category', 'book.ddcClass']);
 
@@ -282,9 +335,7 @@ class BookItemController extends Controller
 
     public function update(Request $request, BookItem $bookItem)
     {
-        if (!auth()->check() || (int) auth()->user()->role_id !== 1) {
-            abort(403, 'Anda tidak memiliki akses.');
-        }
+        $this->authorizePustakawan();
 
         $validated = $request->validate([
             'book_id' => ['required', 'integer', 'exists:books,id'],
@@ -299,7 +350,7 @@ class BookItemController extends Controller
             'title_code' => ['nullable', 'string', 'max:100'],
             'title_initial' => ['nullable', 'string', 'max:20'],
             'copy_number' => ['nullable', 'integer', 'min:1'],
-            'status' => ['required', 'string', Rule::in(['tersedia', 'dipinjam', 'terlambat', 'rusak', 'hilang', 'nonaktif'])],
+            'status' => ['required', 'string', Rule::in(['tersedia', 'dipinjam', 'rusak', 'hilang', 'nonaktif'])],
             'condition' => ['required', 'string', Rule::in(['baik', 'rusak ringan', 'rusak berat', 'hilang'])],
             'location' => ['nullable', 'string', 'max:255'],
             'acquisition_date' => ['nullable', 'date'],
@@ -309,13 +360,47 @@ class BookItemController extends Controller
             'item_code.unique' => 'Kode eksemplar sudah digunakan.',
         ]);
 
-        if ($this->hasActiveLoan($bookItem) && !in_array($validated['status'], ['dipinjam', 'terlambat'], true)) {
+        $copyNumber = $validated['copy_number'] !== null
+            ? (int) $validated['copy_number']
+            : null;
+
+        if ($copyNumber !== null && $this->copyNumberExists((int) $validated['book_id'], $copyNumber, (int) $bookItem->id)) {
+            return back()
+                ->withInput()
+                ->withErrors([
+                    'copy_number' => 'Nomor copy ' . $copyNumber . ' sudah tersedia untuk buku ini.',
+                ]);
+        }
+
+        $hasActiveLoan = $this->hasActiveLoan($bookItem);
+        $condition = $this->normalizeCondition($validated['condition']);
+        $requestedStatus = strtolower(trim((string) $validated['status']));
+
+        if ($hasActiveLoan && $requestedStatus !== 'dipinjam') {
             return back()
                 ->withInput()
                 ->with('error_title', 'Status tidak bisa diubah')
                 ->with('error_message', 'Eksemplar ini sedang dipinjam.')
                 ->with('error_detail', 'Selesaikan pengembalian terlebih dahulu sebelum mengubah status eksemplar.');
         }
+
+        if ($hasActiveLoan && $condition !== $this->normalizeCondition((string) ($bookItem->condition ?? 'baik'))) {
+            return back()
+                ->withInput()
+                ->with('error_title', 'Kondisi tidak bisa diubah')
+                ->with('error_message', 'Eksemplar ini sedang dipinjam.')
+                ->with('error_detail', 'Kondisi eksemplar yang sedang dipinjam harus diperbarui lewat proses pengembalian.');
+        }
+
+        if (! $this->isAllowedStatusConditionPair($requestedStatus, $condition, $hasActiveLoan)) {
+            return back()
+                ->withInput()
+                ->withErrors([
+                    'condition' => 'Kombinasi status dan kondisi tidak valid.',
+                ]);
+        }
+
+        $status = $this->normalizeStatusForCondition($requestedStatus, $condition, $hasActiveLoan);
 
         $bookItem->update($this->filterColumns('book_items', [
             'book_id' => $validated['book_id'],
@@ -324,9 +409,9 @@ class BookItemController extends Controller
             'author_code' => $validated['author_code'] ?? null,
             'title_code' => $validated['title_code'] ?? null,
             'title_initial' => $validated['title_initial'] ?? null,
-            'copy_number' => $validated['copy_number'] ?? null,
-            'status' => $validated['status'],
-            'condition' => $validated['condition'],
+            'copy_number' => $copyNumber,
+            'status' => $status,
+            'condition' => $condition,
             'location' => $validated['location'] ?? null,
             'acquisition_date' => $validated['acquisition_date'] ?? null,
         ]));
@@ -335,14 +420,12 @@ class BookItemController extends Controller
             ->route('book_items.index')
             ->with('success_title', 'Eksemplar berhasil diperbarui')
             ->with('success_message', 'Copy "' . ($bookItem->item_code ?? '-') . '" berhasil diperbarui.')
-            ->with('success_detail', 'Data eksemplar sudah tersimpan.');
+            ->with('success_detail', 'Data eksemplar sudah tersimpan. Status sudah diselaraskan dengan kondisi eksemplar.');
     }
 
     public function destroy(BookItem $bookItem)
     {
-        if (!auth()->check() || (int) auth()->user()->role_id !== 1) {
-            abort(403, 'Anda tidak memiliki akses.');
-        }
+        $this->authorizePustakawan();
 
         $bookItem->load([
             'book',
@@ -400,9 +483,7 @@ class BookItemController extends Controller
 
     public function bulkDestroy(Request $request)
     {
-        if (!auth()->check() || (int) auth()->user()->role_id !== 1) {
-            abort(403, 'Anda tidak memiliki akses.');
-        }
+        $this->authorizePustakawan();
 
         $bookItemIds = collect($request->input('book_item_ids', []))
             ->filter()
@@ -499,6 +580,49 @@ class BookItemController extends Controller
             ->with('success_detail', 'Eksemplar yang pernah memiliki riwayat peminjaman tidak dihapus permanen agar riwayat transaksi tetap aman.');
     }
 
+    public function restoreToStock(BookItem $bookItem)
+    {
+        $this->authorizePustakawan();
+
+        $itemCode = $bookItem->item_code ?? 'Eksemplar';
+
+        if ($this->hasActiveLoan($bookItem)) {
+            return redirect()
+                ->route('book_items.index')
+                ->with('error_title', 'Eksemplar tidak bisa dikembalikan ke stok')
+                ->with('error_message', 'Copy "' . $itemCode . '" sedang dipinjam.')
+                ->with('error_detail', 'Selesaikan pengembalian terlebih dahulu sebelum mengubah stok.');
+        }
+
+        $condition = $this->normalizeCondition((string) ($bookItem->condition ?? 'baik'));
+        $status = $this->statusFromCondition($condition);
+
+        $bookItem->update($this->filterColumns('book_items', [
+            'status' => $status,
+            'condition' => $condition,
+        ]));
+
+        return redirect()
+            ->route('book_items.index')
+            ->with('success_title', 'Status eksemplar diperbarui')
+            ->with('success_message', 'Copy "' . $itemCode . '" berhasil diselaraskan dengan kondisinya.')
+            ->with('success_detail', 'Jika kondisi baik maka status menjadi tersedia. Jika rusak/hilang maka status tidak akan tersedia untuk dipinjam.');
+    }
+
+    private function authorizePustakawan(): void
+    {
+        if (! auth()->check() || (int) auth()->user()->role_id !== 1) {
+            abort(403, 'Anda tidak memiliki akses.');
+        }
+    }
+
+    private function authorizeViewer(): void
+    {
+        if (! auth()->check() || ! in_array((int) auth()->user()->role_id, [1, 2], true)) {
+            abort(403, 'Anda tidak memiliki akses.');
+        }
+    }
+
     private function hasActiveLoan(BookItem $bookItem): bool
     {
         return $bookItem->loanItems()
@@ -526,6 +650,18 @@ class BookItemController extends Controller
         return $lastCopyNumber + 1;
     }
 
+    private function copyNumberExists(int $bookId, int $copyNumber, ?int $ignoreBookItemId = null): bool
+    {
+        $query = BookItem::where('book_id', $bookId)
+            ->where('copy_number', $copyNumber);
+
+        if ($ignoreBookItemId) {
+            $query->where('id', '!=', $ignoreBookItemId);
+        }
+
+        return $query->exists();
+    }
+
     private function generateItemCode(Book $book, int $copyNumber, array $payload = []): string
     {
         $classificationCode = $payload['classification_code']
@@ -543,16 +679,7 @@ class BookItemController extends Controller
         $authorCode = $this->cleanCode($authorCode, 'UNK');
         $titleCode = $this->cleanCode($titleCode, 'b');
 
-        $baseCode = $classificationCode . '-' . $authorCode . '-' . $titleCode;
-
-        $itemCode = $baseCode . '-' . str_pad((string) $copyNumber, 3, '0', STR_PAD_LEFT);
-
-        while (BookItem::where('item_code', $itemCode)->exists()) {
-            $copyNumber++;
-            $itemCode = $baseCode . '-' . str_pad((string) $copyNumber, 3, '0', STR_PAD_LEFT);
-        }
-
-        return $itemCode;
+        return $classificationCode . '-' . $authorCode . '-' . $titleCode . '-' . str_pad((string) $copyNumber, 3, '0', STR_PAD_LEFT);
     }
 
     private function bookCodeParts(Book $book): array
@@ -596,9 +723,56 @@ class BookItemController extends Controller
         return $value !== '' ? $value : $fallback;
     }
 
+    private function normalizeCondition(?string $condition): string
+    {
+        $condition = strtolower(trim((string) $condition));
+
+        return in_array($condition, ['baik', 'rusak ringan', 'rusak berat', 'hilang'], true)
+            ? $condition
+            : 'baik';
+    }
+
+    private function normalizeStatusForCondition(?string $requestedStatus, string $condition, bool $hasActiveLoan = false): string
+    {
+        $requestedStatus = strtolower(trim((string) $requestedStatus));
+        $condition = $this->normalizeCondition($condition);
+
+        if ($hasActiveLoan) {
+            return 'dipinjam';
+        }
+
+        if ($requestedStatus === 'nonaktif') {
+            return 'nonaktif';
+        }
+
+        return match ($condition) {
+            'hilang' => 'hilang',
+            'rusak ringan', 'rusak berat' => 'rusak',
+            default => 'tersedia',
+        };
+    }
+
+    private function isAllowedStatusConditionPair(?string $status, ?string $condition, bool $hasActiveLoan = false): bool
+    {
+        $status = strtolower(trim((string) $status));
+        $condition = $this->normalizeCondition($condition);
+
+        if ($hasActiveLoan) {
+            return $status === 'dipinjam';
+        }
+
+        return match ($status) {
+            'tersedia' => $condition === 'baik',
+            'rusak' => in_array($condition, ['rusak ringan', 'rusak berat'], true),
+            'hilang' => $condition === 'hilang',
+            'nonaktif' => in_array($condition, ['baik', 'rusak ringan', 'rusak berat', 'hilang'], true),
+            default => false,
+        };
+    }
+
     private function statusFromCondition(string $condition): string
     {
-        return match ($condition) {
+        return match ($this->normalizeCondition($condition)) {
             'hilang' => 'hilang',
             'rusak ringan', 'rusak berat' => 'rusak',
             default => 'tersedia',
@@ -619,7 +793,6 @@ class BookItemController extends Controller
         return [
             'tersedia' => 'Tersedia',
             'dipinjam' => 'Dipinjam',
-            'terlambat' => 'Terlambat',
             'rusak' => 'Rusak',
             'hilang' => 'Hilang',
             'nonaktif' => 'Dikeluarkan dari Stok',

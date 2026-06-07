@@ -2,8 +2,8 @@
 
 namespace App\Http\Controllers;
 
-use App\Models\Book;
 use App\Models\BookItem;
+use App\Models\FinePayment;
 use App\Models\Loan;
 use App\Models\LoanItem;
 use App\Models\Member;
@@ -19,7 +19,7 @@ class LoanController extends Controller
 {
     public function index(Request $request)
     {
-        if (!auth()->check() || (int) auth()->user()->role_id !== 1) {
+        if (! auth()->check() || (int) auth()->user()->role_id !== 1) {
             abort(403, 'Anda tidak memiliki akses.');
         }
 
@@ -30,6 +30,7 @@ class LoanController extends Controller
 
         $loans = Loan::with([
                 'member.studentClass',
+                'studentClass',
                 'loanItems.bookItem.book',
             ])
             ->when($keyword !== '', function ($query) use ($keyword) {
@@ -62,7 +63,7 @@ class LoanController extends Controller
 
     public function create()
     {
-        if (!auth()->check() || (int) auth()->user()->role_id !== 1) {
+        if (! auth()->check() || (int) auth()->user()->role_id !== 1) {
             abort(403, 'Anda tidak memiliki akses.');
         }
 
@@ -101,7 +102,7 @@ class LoanController extends Controller
 
     public function store(Request $request)
     {
-        if (!auth()->check() || (int) auth()->user()->role_id !== 1) {
+        if (! auth()->check() || (int) auth()->user()->role_id !== 1) {
             abort(403, 'Anda tidak memiliki akses.');
         }
 
@@ -131,6 +132,9 @@ class LoanController extends Controller
             ]);
         }
 
+        $this->validateLoanSchedule($validated['loan_date'], $validated['due_date'], 'due_date');
+        $this->validateRegularLoanQuota($member, count($validated['book_item_ids']), $maxNormalLoanItems);
+
         $bookItems = BookItem::with('book')
             ->whereIn('id', $validated['book_item_ids'])
             ->get();
@@ -142,7 +146,9 @@ class LoanController extends Controller
             bookItems: $bookItems,
             loanDate: $validated['loan_date'],
             dueDate: $validated['due_date'],
-            notes: $validated['notes'] ?? null
+            notes: $validated['notes'] ?? null,
+            loanType: 'regular',
+            studentClassId: null
         );
 
         return redirect()
@@ -154,7 +160,7 @@ class LoanController extends Controller
 
     public function classBulkCreate()
     {
-        if (!auth()->check() || (int) auth()->user()->role_id !== 1) {
+        if (! auth()->check() || (int) auth()->user()->role_id !== 1) {
             abort(403, 'Anda tidak memiliki akses.');
         }
 
@@ -196,7 +202,7 @@ class LoanController extends Controller
 
     public function classBulkStore(Request $request)
     {
-        if (!auth()->check() || (int) auth()->user()->role_id !== 1) {
+        if (! auth()->check() || (int) auth()->user()->role_id !== 1) {
             abort(403, 'Anda tidak memiliki akses.');
         }
 
@@ -226,6 +232,8 @@ class LoanController extends Controller
             ]);
         }
 
+        $this->validateLoanSchedule($validated['loan_date'], $validated['due_date'], 'due_date');
+
         $bookItems = BookItem::with('book')
             ->whereIn('id', $validated['book_item_ids'])
             ->where('book_id', $validated['book_id'])
@@ -239,9 +247,15 @@ class LoanController extends Controller
 
         $this->validateBorrowableItems($bookItems, $validated['book_item_ids']);
 
-        $studentClass = !empty($validated['student_class_id'])
-            ? StudentClass::find($validated['student_class_id'])
+        $studentClassId = ! empty($validated['student_class_id'])
+            ? (int) $validated['student_class_id']
+            : (int) ($member->student_class_id ?? 0);
+
+        $studentClass = $studentClassId > 0
+            ? StudentClass::find($studentClassId)
             : null;
+
+        $studentClassId = $studentClass?->id;
 
         $bookTitle = $bookItems->first()?->book?->title ?? 'Buku';
 
@@ -262,7 +276,9 @@ class LoanController extends Controller
             bookItems: $bookItems,
             loanDate: $validated['loan_date'],
             dueDate: $validated['due_date'],
-            notes: $autoNote
+            notes: $autoNote,
+            loanType: 'class_bulk',
+            studentClassId: $studentClassId
         );
 
         return redirect()
@@ -274,7 +290,7 @@ class LoanController extends Controller
 
     public function show(Loan $loan)
     {
-        if (!auth()->check() || (int) auth()->user()->role_id !== 1) {
+        if (! auth()->check() || (int) auth()->user()->role_id !== 1) {
             abort(403, 'Anda tidak memiliki akses.');
         }
 
@@ -282,6 +298,7 @@ class LoanController extends Controller
 
         $loan->load([
             'member.studentClass',
+            'studentClass',
             'loanItems.bookItem.book',
         ]);
 
@@ -290,7 +307,7 @@ class LoanController extends Controller
 
     public function edit(Loan $loan)
     {
-        if (!auth()->check() || (int) auth()->user()->role_id !== 1) {
+        if (! auth()->check() || (int) auth()->user()->role_id !== 1) {
             abort(403, 'Anda tidak memiliki akses.');
         }
 
@@ -298,6 +315,7 @@ class LoanController extends Controller
 
         $loan->load([
             'member.studentClass',
+            'studentClass',
             'loanItems.bookItem.book',
         ]);
 
@@ -306,7 +324,7 @@ class LoanController extends Controller
 
     public function update(Request $request, Loan $loan)
     {
-        if (!auth()->check() || (int) auth()->user()->role_id !== 1) {
+        if (! auth()->check() || (int) auth()->user()->role_id !== 1) {
             abort(403, 'Anda tidak memiliki akses.');
         }
 
@@ -316,12 +334,13 @@ class LoanController extends Controller
 
         $loan->load([
             'loanItems.bookItem.book',
-            'member',
+            'member.studentClass',
+            'studentClass',
         ]);
 
         $loanCode = $loan->loan_code ?? ('TRX-' . $loan->id);
 
-        if (!in_array($loan->status, ['aktif', 'terlambat'], true)) {
+        if (! in_array($loan->status, ['aktif', 'terlambat'], true)) {
             return back()
                 ->with('error_title', 'Transaksi tidak bisa diproses')
                 ->with('error_message', 'Transaksi "' . $loanCode . '" tidak berada pada status aktif atau terlambat.')
@@ -342,6 +361,12 @@ class LoanController extends Controller
         ]);
 
         $returnDate = Carbon::parse($validated['return_date'])->format('Y-m-d');
+
+        if ($loan->loan_date && Carbon::parse($returnDate)->startOfDay()->lt(Carbon::parse($loan->loan_date)->startOfDay())) {
+            throw ValidationException::withMessages([
+                'return_date' => 'Tanggal pengembalian tidak boleh sebelum tanggal pinjam.',
+            ]);
+        }
 
         $selectedLoanItemIds = collect($validated['loan_item_ids'])
             ->map(fn ($id) => (int) $id)
@@ -368,23 +393,51 @@ class LoanController extends Controller
 
         $finePerDay = $this->settingInt('fine_per_day', 500, 0, 1000000);
 
-        DB::transaction(function () use ($loan, $selectedActiveLoanItems, $returnDate, $finePerDay, $request) {
+        DB::transaction(function () use ($loan, $selectedLoanItemIds, $returnDate, $finePerDay, $request) {
+            $lockedLoan = Loan::whereKey($loan->id)
+                ->lockForUpdate()
+                ->firstOrFail();
+
+            if (! in_array($lockedLoan->status, ['aktif', 'terlambat'], true)) {
+                throw ValidationException::withMessages([
+                    'loan_item_ids' => 'Transaksi ini sudah tidak aktif dan tidak bisa diproses kembali.',
+                ]);
+            }
+
+            $selectedActiveLoanItems = LoanItem::with('bookItem')
+                ->where('loan_id', $lockedLoan->id)
+                ->whereIn('id', $selectedLoanItemIds->all())
+                ->whereIn('status', ['dipinjam', 'terlambat'])
+                ->lockForUpdate()
+                ->get();
+
+            if ($selectedActiveLoanItems->count() !== $selectedLoanItemIds->count()) {
+                throw ValidationException::withMessages([
+                    'loan_item_ids' => 'Ada item yang sudah berubah status. Muat ulang halaman lalu pilih kembali item yang masih aktif.',
+                ]);
+            }
+
+            $bookItemsById = BookItem::whereIn('id', $selectedActiveLoanItems->pluck('book_item_id')->filter()->all())
+                ->lockForUpdate()
+                ->get()
+                ->keyBy('id');
+
             foreach ($selectedActiveLoanItems as $loanItem) {
-                $bookItem = $loanItem->bookItem;
+                $bookItem = $bookItemsById->get($loanItem->book_item_id);
 
                 $returnCondition = $request->input('return_conditions.' . $loanItem->id, 'baik');
 
                 $returnCondition = trim((string) $returnCondition);
                 $returnCondition = $returnCondition !== '' ? strtolower($returnCondition) : 'baik';
 
-                if (!in_array($returnCondition, ['baik', 'rusak ringan', 'rusak berat', 'hilang'], true)) {
+                if (! in_array($returnCondition, ['baik', 'rusak ringan', 'rusak berat', 'hilang'], true)) {
                     $returnCondition = 'baik';
                 }
 
                 $lateDays = 0;
 
-                if ($loan->due_date) {
-                    $dueDate = Carbon::parse($loan->due_date)->startOfDay();
+                if ($lockedLoan->due_date) {
+                    $dueDate = Carbon::parse($lockedLoan->due_date)->startOfDay();
                     $returnedAt = Carbon::parse($returnDate)->startOfDay();
 
                     if ($returnedAt->gt($dueDate)) {
@@ -402,6 +455,8 @@ class LoanController extends Controller
                     'status' => 'dikembalikan',
                     'notes' => $request->input('notes'),
                 ]));
+
+                $this->syncFinePayment($loanItem, $fineAmount, $request->input('notes'));
 
                 if ($bookItem) {
                     $bookItemStatus = 'tersedia';
@@ -425,24 +480,24 @@ class LoanController extends Controller
                 }
             }
 
-            $remainingActiveItems = $loan->loanItems()
+            $remainingActiveItems = $lockedLoan->loanItems()
                 ->whereIn('status', ['dipinjam', 'terlambat'])
                 ->count();
 
             if ($remainingActiveItems === 0) {
-                $loan->update($this->filterColumns('loans', [
+                $lockedLoan->update($this->filterColumns('loans', [
                     'status' => 'selesai',
                     'return_date' => $returnDate,
-                    'notes' => $request->input('notes'),
+                    'return_notes' => $request->input('notes'),
                 ]));
             } else {
-                $newLoanStatus = $loan->due_date && Carbon::parse($loan->due_date)->startOfDay()->lt(today())
+                $newLoanStatus = $lockedLoan->due_date && Carbon::parse($lockedLoan->due_date)->startOfDay()->lt(today())
                     ? 'terlambat'
                     : 'aktif';
 
-                $loan->update($this->filterColumns('loans', [
+                $lockedLoan->update($this->filterColumns('loans', [
                     'status' => $newLoanStatus,
-                    'notes' => $request->input('notes'),
+                    'return_notes' => $request->input('notes'),
                 ]));
             }
         });
@@ -456,7 +511,7 @@ class LoanController extends Controller
 
     public function destroy(Request $request, Loan $loan)
     {
-        if (!auth()->check() || (int) auth()->user()->role_id !== 1) {
+        if (! auth()->check() || (int) auth()->user()->role_id !== 1) {
             abort(403, 'Anda tidak memiliki akses.');
         }
 
@@ -483,7 +538,7 @@ class LoanController extends Controller
                 ->with('error_detail', 'Pembatalan dibatalkan untuk mencegah transaksi terhapus tidak sengaja.');
         }
 
-        if (!in_array($loan->status, ['aktif', 'terlambat'], true)) {
+        if (! in_array($loan->status, ['aktif', 'terlambat'], true)) {
             return back()
                 ->with('error_title', 'Transaksi tidak bisa dibatalkan')
                 ->with('error_message', 'Transaksi "' . $loanCode . '" tidak berada pada status aktif atau terlambat.')
@@ -491,7 +546,7 @@ class LoanController extends Controller
         }
 
         $hasProcessedItem = $loan->loanItems->contains(function ($loanItem) {
-            return !in_array($loanItem->status, ['dipinjam', 'terlambat'], true);
+            return ! in_array($loanItem->status, ['dipinjam', 'terlambat'], true);
         });
 
         if ($hasProcessedItem) {
@@ -505,7 +560,7 @@ class LoanController extends Controller
             foreach ($loan->loanItems as $loanItem) {
                 $bookItem = $loanItem->bookItem;
 
-                if (!$bookItem) {
+                if (! $bookItem) {
                     continue;
                 }
 
@@ -544,9 +599,30 @@ class LoanController extends Controller
             ->with('success_detail', 'Eksemplar buku dikembalikan ke stok.');
     }
 
-    private function createLoanTransaction(Member $member, $bookItems, string $loanDate, string $dueDate, ?string $notes = null): Loan
-    {
-        return DB::transaction(function () use ($member, $bookItems, $loanDate, $dueDate, $notes) {
+    private function createLoanTransaction(
+        Member $member,
+        $bookItems,
+        string $loanDate,
+        string $dueDate,
+        ?string $notes = null,
+        string $loanType = 'regular',
+        ?int $studentClassId = null
+    ): Loan {
+        return DB::transaction(function () use ($member, $bookItems, $loanDate, $dueDate, $notes, $loanType, $studentClassId) {
+            $requestedIds = collect($bookItems)
+                ->pluck('id')
+                ->map(fn ($id) => (int) $id)
+                ->values()
+                ->all();
+
+            $lockedBookItems = BookItem::with('book')
+                ->whereIn('id', $requestedIds)
+                ->orderBy('id')
+                ->lockForUpdate()
+                ->get();
+
+            $this->validateBorrowableItems($lockedBookItems, $requestedIds);
+
             $loanStatus = Carbon::parse($dueDate)->startOfDay()->lt(today())
                 ? 'terlambat'
                 : 'aktif';
@@ -554,14 +630,18 @@ class LoanController extends Controller
             $loan = Loan::create($this->filterColumns('loans', [
                 'loan_code' => $this->generateLoanCode(),
                 'member_id' => $member->id,
+                'student_class_id' => $studentClassId,
                 'loan_date' => $loanDate,
                 'due_date' => $dueDate,
+                'return_date' => null,
                 'status' => $loanStatus,
+                'loan_type' => $loanType,
                 'handled_by' => auth()->id(),
                 'notes' => $notes,
+                'return_notes' => null,
             ]));
 
-            foreach ($bookItems as $bookItem) {
+            foreach ($lockedBookItems as $bookItem) {
                 LoanItem::create($this->filterColumns('loan_items', [
                     'loan_id' => $loan->id,
                     'book_item_id' => $bookItem->id,
@@ -599,7 +679,17 @@ class LoanController extends Controller
                 ]);
             }
 
-            if ($bookItem->book && Schema::hasColumn('books', 'is_borrowable') && !(bool) $bookItem->book->is_borrowable) {
+            if (Schema::hasColumn('book_items', 'condition')) {
+                $condition = strtolower((string) ($bookItem->condition ?? 'baik'));
+
+                if (in_array($condition, ['hilang', 'rusak berat'], true)) {
+                    throw ValidationException::withMessages([
+                        'book_item_ids' => 'Eksemplar "' . ($bookItem->item_code ?? '-') . '" berkondisi ' . $condition . ' sehingga tidak boleh dipinjam.',
+                    ]);
+                }
+            }
+
+            if ($bookItem->book && Schema::hasColumn('books', 'is_borrowable') && ! (bool) $bookItem->book->is_borrowable) {
                 throw ValidationException::withMessages([
                     'book_item_ids' => 'Buku "' . ($bookItem->book->title ?? '-') . '" tidak diizinkan untuk dipinjam.',
                 ]);
@@ -631,6 +721,113 @@ class LoanController extends Controller
             ->toArray();
     }
 
+    private function validateLoanSchedule(string $loanDate, string $dueDate, string $field = 'due_date'): void
+    {
+        $loanDateValue = Carbon::parse($loanDate)->startOfDay();
+        $dueDateValue = Carbon::parse($dueDate)->startOfDay();
+        $today = today()->startOfDay();
+
+        if ($loanDateValue->gt($today)) {
+            throw ValidationException::withMessages([
+                'loan_date' => 'Tanggal pinjam tidak boleh melebihi hari ini.',
+            ]);
+        }
+
+        if ($dueDateValue->lt($loanDateValue)) {
+            throw ValidationException::withMessages([
+                $field => 'Batas kembali tidak boleh sebelum tanggal pinjam.',
+            ]);
+        }
+
+        $loanDurationDays = $this->settingInt('loan_duration_days', 7, 1, 365);
+        $maximumDueDate = $loanDateValue->copy()->addDays($loanDurationDays);
+
+        if ($dueDateValue->gt($maximumDueDate)) {
+            throw ValidationException::withMessages([
+                $field => 'Batas kembali maksimal ' . $loanDurationDays . ' hari dari tanggal pinjam.',
+            ]);
+        }
+    }
+
+    private function validateRegularLoanQuota(Member $member, int $requestedItemCount, int $maxNormalLoanItems): void
+    {
+        $activeRegularItemCount = $this->activeRegularLoanItemsCount($member);
+
+        if (($activeRegularItemCount + $requestedItemCount) <= $maxNormalLoanItems) {
+            return;
+        }
+
+        throw ValidationException::withMessages([
+            'book_item_ids' => 'Anggota ini masih memiliki ' . $activeRegularItemCount . ' eksemplar aktif pada peminjaman biasa. Maksimal total aktif adalah ' . $maxNormalLoanItems . ' eksemplar.',
+        ]);
+    }
+
+    private function activeRegularLoanItemsCount(Member $member): int
+    {
+        return LoanItem::whereIn('status', ['dipinjam', 'terlambat'])
+            ->whereHas('loan', function ($query) use ($member) {
+                $query->where('member_id', $member->id)
+                    ->whereIn('status', ['aktif', 'terlambat']);
+
+                if (Schema::hasColumn('loans', 'loan_type')) {
+                    $query->where(function ($typeQuery) {
+                        $typeQuery->whereNull('loan_type')
+                            ->orWhere('loan_type', Loan::TYPE_REGULAR);
+                    });
+                }
+            })
+            ->count();
+    }
+
+    private function syncFinePayment(LoanItem $loanItem, int $fineAmount, ?string $notes = null): void
+    {
+        if (! Schema::hasTable('fine_payments')) {
+            return;
+        }
+
+        $existingPayment = FinePayment::where('loan_item_id', $loanItem->id)
+            ->lockForUpdate()
+            ->first();
+
+        if ($fineAmount <= 0) {
+            if ($existingPayment && $existingPayment->payment_status === 'belum dibayar') {
+                $existingPayment->delete();
+            }
+
+            return;
+        }
+
+        $paymentNotes = trim((string) $notes);
+        $paymentNotes = $paymentNotes !== ''
+            ? $paymentNotes
+            : 'Denda keterlambatan otomatis dari proses pengembalian.';
+
+        if ($existingPayment) {
+            $payload = [
+                'amount' => $fineAmount,
+                'notes' => $paymentNotes,
+            ];
+
+            if ($existingPayment->payment_status === 'belum dibayar') {
+                $payload['payment_date'] = null;
+                $payload['received_by'] = null;
+            }
+
+            $existingPayment->update($payload);
+
+            return;
+        }
+
+        FinePayment::create([
+            'loan_item_id' => $loanItem->id,
+            'amount' => $fineAmount,
+            'payment_date' => null,
+            'payment_status' => 'belum dibayar',
+            'received_by' => null,
+            'notes' => $paymentNotes,
+        ]);
+    }
+
     private function syncOverdueLoans(): void
     {
         $today = today()->format('Y-m-d');
@@ -655,6 +852,7 @@ class LoanController extends Controller
         $prefix = 'TRX-' . now()->format('Ymd') . '-';
 
         $lastLoan = Loan::where('loan_code', 'like', $prefix . '%')
+            ->lockForUpdate()
             ->orderByDesc('loan_code')
             ->first();
 

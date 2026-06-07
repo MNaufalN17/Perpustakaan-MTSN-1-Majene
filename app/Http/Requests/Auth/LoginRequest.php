@@ -20,6 +20,15 @@ class LoginRequest extends FormRequest
         return true;
     }
 
+    protected function prepareForValidation(): void
+    {
+        if (! $this->filled('login') && $this->filled('email')) {
+            $this->merge([
+                'login' => $this->input('email'),
+            ]);
+        }
+    }
+
     /**
      * Validasi input login.
      *

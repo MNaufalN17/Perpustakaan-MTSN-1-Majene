@@ -68,7 +68,7 @@ Route::middleware(['auth', 'verified'])->group(function () {
                 ->get();
 
             $estimatedActiveFines = $overdueLoanItems->sum(function ($item) use ($finePerDay) {
-                if (!$item->loan || !$item->loan->due_date) {
+                if (! $item->loan || ! $item->loan->due_date) {
                     return 0;
                 }
 
@@ -171,6 +171,15 @@ Route::middleware(['auth', 'verified'])->group(function () {
             return redirect()->route('dashboard');
         })->name('pustakawan.dashboard');
 
+        /*
+        |--------------------------------------------------------------------------
+        | Loan Routes
+        |--------------------------------------------------------------------------
+        | Route khusus peminjaman kelas harus diletakkan sebelum Route::resource.
+        | Kalau diletakkan setelah resource, Laravel bisa menganggap "class-bulk"
+        | sebagai parameter {loan}.
+        */
+
         Route::get('/loans/class-bulk/create', [LoanController::class, 'classBulkCreate'])
             ->name('loans.class_bulk.create');
 
@@ -179,8 +188,23 @@ Route::middleware(['auth', 'verified'])->group(function () {
 
         Route::resource('loans', LoanController::class);
 
+        /*
+        |--------------------------------------------------------------------------
+        | Member Routes
+        |--------------------------------------------------------------------------
+        */
+
         Route::post('/members/quick-store', [MemberController::class, 'quickStore'])
             ->name('members.quick_store');
+
+        Route::resource('members', MemberController::class)
+            ->except(['index', 'show']);
+
+        /*
+        |--------------------------------------------------------------------------
+        | Book Routes
+        |--------------------------------------------------------------------------
+        */
 
         Route::resource('books', BookController::class)
             ->except(['index', 'show']);
@@ -194,8 +218,11 @@ Route::middleware(['auth', 'verified'])->group(function () {
         Route::resource('book_items', BookItemController::class)
             ->except(['index', 'show']);
 
-        Route::resource('members', MemberController::class)
-            ->except(['index', 'show']);
+        /*
+        |--------------------------------------------------------------------------
+        | Master Data Routes
+        |--------------------------------------------------------------------------
+        */
 
         Route::resource('classes', StudentClassController::class);
 
