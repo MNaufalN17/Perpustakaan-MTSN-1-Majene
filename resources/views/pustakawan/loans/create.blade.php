@@ -25,10 +25,10 @@
                 @php
                     $classBulkRoute = null;
 
-                    if (\Illuminate\Support\Facades\Route::has('loans.class-bulk.create')) {
-                        $classBulkRoute = route('loans.class-bulk.create');
-                    } elseif (\Illuminate\Support\Facades\Route::has('loans.classBulk.create')) {
-                        $classBulkRoute = route('loans.classBulk.create');
+                    if (\Illuminate\Support\Facades\Route::has('loans.class_bulk.create')) {
+                        $classBulkRoute = route('loans.class_bulk.create');
+                    } elseif (\Illuminate\Support\Facades\Route::has('loans.class_bulk.create')) {
+                        $classBulkRoute = route('loans.class_bulk.create');
                     } elseif (\Illuminate\Support\Facades\Route::has('loans.class_bulk.create')) {
                         $classBulkRoute = route('loans.class_bulk.create');
                     }

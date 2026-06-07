@@ -100,10 +100,10 @@
 
         $classBulkStoreRoute = null;
 
-        if (\Illuminate\Support\Facades\Route::has('loans.class-bulk.store')) {
-            $classBulkStoreRoute = route('loans.class-bulk.store');
-        } elseif (\Illuminate\Support\Facades\Route::has('loans.classBulk.store')) {
-            $classBulkStoreRoute = route('loans.classBulk.store');
+        if (\Illuminate\Support\Facades\Route::has('loans.class_bulk.store')) {
+            $classBulkStoreRoute = route('loans.class_bulk.store');
+        } elseif (\Illuminate\Support\Facades\Route::has('loans.class_bulk.store')) {
+            $classBulkStoreRoute = route('loans.class_bulk.store');
         } elseif (\Illuminate\Support\Facades\Route::has('loans.class_bulk.store')) {
             $classBulkStoreRoute = route('loans.class_bulk.store');
         }
@@ -129,8 +129,8 @@
 
                     <p class="mt-1 text-sm">
                         Pastikan route store untuk peminjaman kelas memiliki salah satu nama:
-                        <strong>loans.class-bulk.store</strong>,
-                        <strong>loans.classBulk.store</strong>, atau
+                        <strong>loans.class_bulk.store</strong>,
+                        <strong>loans.class_bulk.store</strong>, atau
                         <strong>loans.class_bulk.store</strong>.
                     </p>
                 </div>
