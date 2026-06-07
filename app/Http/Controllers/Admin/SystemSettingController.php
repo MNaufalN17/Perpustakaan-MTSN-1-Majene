@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Admin;
 use App\Http\Controllers\Controller;
 use App\Models\SystemSetting;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 
 class SystemSettingController extends Controller
@@ -41,10 +42,12 @@ class SystemSettingController extends Controller
             'max_normal_loan_items' => ['required', 'integer', 'min:1', 'max:200'],
             'max_class_loan_items' => ['required', 'integer', 'min:1', 'max:500'],
         ], [
+            'school_name.required' => 'Nama sekolah wajib diisi.',
+            'library_name.required' => 'Nama perpustakaan wajib diisi.',
+            'fine_per_day.required' => 'Denda per hari wajib diisi.',
+            'loan_duration_days.required' => 'Masa pinjam default wajib diisi.',
             'max_normal_loan_items.required' => 'Maksimal buku peminjaman biasa wajib diisi.',
-            'max_normal_loan_items.integer' => 'Maksimal buku peminjaman biasa harus berupa angka.',
             'max_class_loan_items.required' => 'Maksimal eksemplar peminjaman kelas wajib diisi.',
-            'max_class_loan_items.integer' => 'Maksimal eksemplar peminjaman kelas harus berupa angka.',
         ]);
 
         foreach ($validated as $key => $value) {
@@ -65,12 +68,12 @@ class SystemSettingController extends Controller
                 return SystemSetting::getValue($key, $default);
             }
 
-            if (Schema::hasColumn('system_settings', 'key')) {
-                return SystemSetting::where('key', $key)->value('value') ?? $default;
+            if (Schema::hasColumn('system_settings', 'key') && Schema::hasColumn('system_settings', 'value')) {
+                return DB::table('system_settings')->where('key', $key)->value('value') ?? $default;
             }
 
-            if (Schema::hasColumn('system_settings', 'setting_key')) {
-                return SystemSetting::where('setting_key', $key)->value('setting_value') ?? $default;
+            if (Schema::hasColumn('system_settings', 'setting_key') && Schema::hasColumn('system_settings', 'setting_value')) {
+                return DB::table('system_settings')->where('setting_key', $key)->value('setting_value') ?? $default;
             }
         } catch (\Throwable $e) {
             return $default;
@@ -94,100 +97,74 @@ class SystemSettingController extends Controller
 
     private function saveSetting(string $key, mixed $value): void
     {
+        $now = now();
+        $label = $this->settingLabel($key);
+
         if (Schema::hasColumn('system_settings', 'key') && Schema::hasColumn('system_settings', 'value')) {
-            SystemSetting::updateOrCreate(
+            DB::table('system_settings')->updateOrInsert(
                 ['key' => $key],
-                $this->settingPayload($key, $value, 'value')
+                $this->filterColumns('system_settings', [
+                    'key' => $key,
+                    'value' => (string) $value,
+                    'label' => $label,
+                    'type' => is_numeric($value) ? 'integer' : 'string',
+                    'description' => $this->settingDescription($key),
+                    'created_at' => $now,
+                    'updated_at' => $now,
+                ])
             );
 
             return;
         }
 
         if (Schema::hasColumn('system_settings', 'setting_key') && Schema::hasColumn('system_settings', 'setting_value')) {
-            SystemSetting::updateOrCreate(
+            DB::table('system_settings')->updateOrInsert(
                 ['setting_key' => $key],
-                $this->settingPayload($key, $value, 'setting_value')
+                $this->filterColumns('system_settings', [
+                    'setting_key' => $key,
+                    'setting_value' => (string) $value,
+                    'label' => $label,
+                    'type' => is_numeric($value) ? 'integer' : 'string',
+                    'description' => $this->settingDescription($key),
+                    'created_at' => $now,
+                    'updated_at' => $now,
+                ])
             );
-
-            return;
         }
-
-        SystemSetting::updateOrCreate(
-            ['key' => $key],
-            $this->settingPayload($key, $value, 'value')
-        );
     }
 
-    private function settingPayload(string $key, mixed $value, string $valueColumn): array
+    private function settingLabel(string $key): string
     {
-        $metadata = $this->settingMetadata($key);
-        $payload = [
-            $valueColumn => (string) $value,
-        ];
-
-        if (Schema::hasColumn('system_settings', 'label')) {
-            $payload['label'] = $metadata['label'];
-        }
-
-        if (Schema::hasColumn('system_settings', 'type')) {
-            $payload['type'] = $metadata['type'];
-        }
-
-        if (Schema::hasColumn('system_settings', 'setting_group')) {
-            $payload['setting_group'] = $metadata['group'];
-        }
-
-        if (Schema::hasColumn('system_settings', 'description')) {
-            $payload['description'] = $metadata['description'];
-        }
-
-        return $payload;
+        return match ($key) {
+            'school_name' => 'Nama Sekolah',
+            'library_name' => 'Nama Perpustakaan',
+            'fine_per_day' => 'Denda per Hari',
+            'loan_duration_days' => 'Masa Pinjam Default',
+            'max_normal_loan_items' => 'Maksimal Buku Peminjaman Biasa',
+            'max_class_loan_items' => 'Maksimal Eksemplar Peminjaman Kelas',
+            default => ucwords(str_replace('_', ' ', $key)),
+        };
     }
 
-    private function settingMetadata(string $key): array
+    private function settingDescription(string $key): string
     {
-        return [
-            'school_name' => [
-                'label' => 'Nama Sekolah',
-                'type' => 'text',
-                'group' => 'identity',
-                'description' => 'Nama sekolah atau madrasah yang digunakan pada sistem.',
-            ],
-            'library_name' => [
-                'label' => 'Nama Perpustakaan',
-                'type' => 'text',
-                'group' => 'identity',
-                'description' => 'Nama perpustakaan yang tampil pada halaman dan laporan.',
-            ],
-            'fine_per_day' => [
-                'label' => 'Denda per Hari',
-                'type' => 'number',
-                'group' => 'circulation',
-                'description' => 'Nominal denda keterlambatan per eksemplar per hari.',
-            ],
-            'loan_duration_days' => [
-                'label' => 'Masa Pinjam Default',
-                'type' => 'number',
-                'group' => 'circulation',
-                'description' => 'Jumlah hari peminjaman default.',
-            ],
-            'max_normal_loan_items' => [
-                'label' => 'Maksimal Buku Peminjaman Biasa',
-                'type' => 'number',
-                'group' => 'circulation',
-                'description' => 'Jumlah maksimal eksemplar dalam satu transaksi peminjaman biasa.',
-            ],
-            'max_class_loan_items' => [
-                'label' => 'Maksimal Eksemplar Peminjaman Kelas',
-                'type' => 'number',
-                'group' => 'circulation',
-                'description' => 'Jumlah maksimal eksemplar dalam satu transaksi peminjaman kelas.',
-            ],
-        ][$key] ?? [
-            'label' => str($key)->replace('_', ' ')->title()->toString(),
-            'type' => 'text',
-            'group' => 'general',
-            'description' => null,
-        ];
+        return match ($key) {
+            'school_name' => 'Nama sekolah yang ditampilkan pada sistem.',
+            'library_name' => 'Nama perpustakaan yang ditampilkan pada sistem.',
+            'fine_per_day' => 'Nominal denda keterlambatan per hari.',
+            'loan_duration_days' => 'Jumlah hari default masa peminjaman.',
+            'max_normal_loan_items' => 'Batas maksimal eksemplar untuk peminjaman biasa.',
+            'max_class_loan_items' => 'Batas maksimal eksemplar untuk peminjaman kelas atau rombongan.',
+            default => 'Pengaturan sistem.',
+        };
+    }
+
+    private function filterColumns(string $table, array $payload): array
+    {
+        return collect($payload)
+            ->filter(function ($value, string $column) use ($table) {
+                return Schema::hasColumn($table, $column);
+            })
+            ->toArray();
     }
 }

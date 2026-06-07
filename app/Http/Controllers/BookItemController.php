@@ -580,34 +580,58 @@ class BookItemController extends Controller
             ->with('success_detail', 'Eksemplar yang pernah memiliki riwayat peminjaman tidak dihapus permanen agar riwayat transaksi tetap aman.');
     }
 
-    public function restoreToStock(BookItem $bookItem)
-    {
-        $this->authorizePustakawan();
+    public function restoreToStock(Request $request, BookItem $bookItem)
+{
+    if (!auth()->check() || (int) auth()->user()->role_id !== 1) {
+        abort(403, 'Anda tidak memiliki akses.');
+    }
 
-        $itemCode = $bookItem->item_code ?? 'Eksemplar';
+    $bookItem->load(['book', 'loanItems.loan']);
 
-        if ($this->hasActiveLoan($bookItem)) {
-            return redirect()
-                ->route('book_items.index')
-                ->with('error_title', 'Eksemplar tidak bisa dikembalikan ke stok')
-                ->with('error_message', 'Copy "' . $itemCode . '" sedang dipinjam.')
-                ->with('error_detail', 'Selesaikan pengembalian terlebih dahulu sebelum mengubah stok.');
-        }
+    $itemCode = $bookItem->item_code ?? 'Eksemplar';
 
-        $condition = $this->normalizeCondition((string) ($bookItem->condition ?? 'baik'));
-        $status = $this->statusFromCondition($condition);
-
-        $bookItem->update($this->filterColumns('book_items', [
-            'status' => $status,
-            'condition' => $condition,
-        ]));
-
+    if ($this->hasActiveLoan($bookItem)) {
         return redirect()
             ->route('book_items.index')
-            ->with('success_title', 'Status eksemplar diperbarui')
-            ->with('success_message', 'Copy "' . $itemCode . '" berhasil diselaraskan dengan kondisinya.')
-            ->with('success_detail', 'Jika kondisi baik maka status menjadi tersedia. Jika rusak/hilang maka status tidak akan tersedia untuk dipinjam.');
+            ->with('error_title', 'Eksemplar sedang dipinjam')
+            ->with('error_message', 'Copy "' . $itemCode . '" belum bisa dimasukkan kembali ke stok.')
+            ->with('error_detail', 'Selesaikan pengembalian terlebih dahulu.');
     }
+
+    if ($bookItem->status !== 'nonaktif') {
+        return redirect()
+            ->route('book_items.index')
+            ->with('error_title', 'Eksemplar sudah berada di stok')
+            ->with('error_message', 'Copy "' . $itemCode . '" tidak sedang dikeluarkan dari stok.')
+            ->with('error_detail', 'Tidak ada perubahan yang perlu dilakukan.');
+    }
+
+    if (in_array($bookItem->condition, ['hilang', 'rusak berat'], true)) {
+        return redirect()
+            ->route('book_items.index')
+            ->with('error_title', 'Kondisi belum layak')
+            ->with('error_message', 'Copy "' . $itemCode . '" belum bisa dimasukkan kembali ke stok.')
+            ->with('error_detail', 'Ubah kondisi eksemplar melalui menu Edit menjadi Baik atau Rusak Ringan terlebih dahulu.');
+    }
+
+    if (!in_array($bookItem->condition, ['baik', 'rusak ringan'], true)) {
+        return redirect()
+            ->route('book_items.index')
+            ->with('error_title', 'Kondisi tidak valid')
+            ->with('error_message', 'Copy "' . $itemCode . '" belum bisa dimasukkan kembali ke stok.')
+            ->with('error_detail', 'Pastikan kondisi eksemplar sudah benar.');
+    }
+
+    $bookItem->update($this->filterColumns('book_items', [
+        'status' => 'tersedia',
+    ]));
+
+    return redirect()
+        ->route('book_items.index')
+        ->with('success_title', 'Eksemplar masuk kembali ke stok')
+        ->with('success_message', 'Copy "' . $itemCode . '" berhasil dimasukkan kembali ke stok.')
+        ->with('success_detail', 'Eksemplar sekarang berstatus tersedia dan dapat digunakan kembali.');
+}
 
     private function authorizePustakawan(): void
     {
