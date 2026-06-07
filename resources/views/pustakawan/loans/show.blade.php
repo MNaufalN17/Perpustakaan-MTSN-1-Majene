@@ -43,6 +43,10 @@
     @endphp
 
     <style>
+        [x-cloak] {
+            display: none !important;
+        }
+
         @media print {
             body {
                 background: #ffffff !important;
@@ -95,7 +99,11 @@
         </div>
     </x-slot>
 
-    <div class="min-h-screen bg-gradient-to-br from-slate-50 via-emerald-50/40 to-sky-50/40 py-10">
+    <div
+        x-data="returnConfirmation()"
+        @keydown.escape.window="closeReturnConfirmModal()"
+        class="min-h-screen bg-gradient-to-br from-slate-50 via-emerald-50/40 to-sky-50/40 py-10"
+    >
         <div class="mx-auto max-w-5xl sm:px-6 lg:px-8">
 
             <div class="print-area overflow-hidden rounded-[2rem] border border-white/70 bg-white shadow-[0_18px_50px_rgba(15,23,42,0.06)]">
@@ -241,12 +249,21 @@
                         <form
                             method="POST"
                             action="{{ route('loans.update', $loan) }}"
+                            x-ref="returnForm"
+                            @submit.prevent="openReturnConfirmModal()"
                             class="mt-6 space-y-5"
-                            onsubmit="return confirm('Proses pengembalian untuk transaksi {{ $loanCode }}?')">
+                        >
                             @csrf
                             @method('PUT')
 
                             <input type="hidden" name="return_date" value="{{ $todayReturnDate }}">
+
+                            <div
+                                x-show="returnConfirmError"
+                                x-cloak
+                                class="rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm font-semibold text-red-700"
+                                x-text="returnConfirmError"
+                            ></div>
 
                             <div class="rounded-2xl border border-sky-100 bg-sky-50 px-4 py-3">
                                 <p class="text-sm font-bold text-sky-700">
@@ -266,14 +283,14 @@
                                 <div class="flex gap-2">
                                     <button
                                         type="button"
-                                        onclick="document.querySelectorAll('.return-item-checkbox').forEach(function (checkbox) { checkbox.checked = true; });"
+                                        @click="selectAllReturnItems()"
                                         class="inline-flex items-center justify-center rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-2 text-xs font-bold text-emerald-700 transition hover:bg-emerald-100">
                                         Pilih Semua
                                     </button>
 
                                     <button
                                         type="button"
-                                        onclick="document.querySelectorAll('.return-item-checkbox').forEach(function (checkbox) { checkbox.checked = false; });"
+                                        @click="clearReturnItems()"
                                         class="inline-flex items-center justify-center rounded-xl border border-gray-200 bg-white px-4 py-2 text-xs font-bold text-gray-600 transition hover:bg-gray-50">
                                         Kosongkan
                                     </button>
@@ -297,6 +314,7 @@
                                                 name="loan_item_ids[]"
                                                 value="{{ $loanItem->id }}"
                                                 @checked($isChecked)
+                                                @change="returnConfirmError = ''"
                                                 class="return-item-checkbox mt-1 rounded border-gray-300 text-emerald-700 focus:ring-emerald-500">
 
                                             <span>
@@ -497,5 +515,168 @@
             </div>
 
         </div>
+
+        @if($isProcessable)
+        <div
+            x-show="returnConfirmModalOpen"
+            x-cloak
+            class="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 px-4 py-8 backdrop-blur-sm no-print"
+        >
+            <div
+                @click.outside="closeReturnConfirmModal()"
+                class="w-full max-w-lg overflow-hidden rounded-[2rem] bg-white shadow-2xl"
+            >
+                <div class="bg-gradient-to-r from-emerald-700 to-teal-500 px-6 py-5 text-white">
+                    <div class="flex items-start justify-between gap-4">
+                        <div>
+                            <h3 class="text-lg font-extrabold">
+                                Konfirmasi Pengembalian
+                            </h3>
+
+                            <p class="mt-1 text-sm text-emerald-50">
+                                Pastikan item dan kondisi buku sudah benar sebelum diproses.
+                            </p>
+                        </div>
+
+                        <button
+                            type="button"
+                            @click="closeReturnConfirmModal()"
+                            class="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-white/15 transition hover:bg-white/25"
+                        >
+                            <span class="material-symbols-outlined">close</span>
+                        </button>
+                    </div>
+                </div>
+
+                <div class="space-y-5 p-6">
+                    <div class="rounded-2xl border border-gray-100 bg-slate-50 p-4">
+                        <p class="text-xs font-bold uppercase tracking-wider text-gray-500">
+                            Detail Transaksi
+                        </p>
+
+                        <p class="mt-2 font-mono text-lg font-extrabold text-gray-900">
+                            {{ $loanCode }}
+                        </p>
+
+                        <p class="mt-2 text-sm text-gray-600">
+                            Peminjam:
+                            <span class="font-bold text-gray-900">
+                                {{ $loan->member->name ?? '-' }}
+                            </span>
+                        </p>
+
+                        <p class="mt-1 text-sm text-gray-600">
+                            Tanggal kembali:
+                            <span class="font-bold text-gray-900">
+                                {{ $todayReturnDateText }}
+                            </span>
+                        </p>
+                    </div>
+
+                    <div class="grid gap-3 sm:grid-cols-2">
+                        <div class="rounded-2xl border border-emerald-100 bg-emerald-50 p-4">
+                            <p class="text-xs font-bold uppercase tracking-wider text-emerald-700">
+                                Item Diproses
+                            </p>
+
+                            <p class="mt-2 text-2xl font-extrabold text-emerald-800">
+                                <span x-text="selectedReturnItemCount"></span>
+                            </p>
+                        </div>
+
+                        <div class="rounded-2xl border border-sky-100 bg-sky-50 p-4">
+                            <p class="text-xs font-bold uppercase tracking-wider text-sky-700">
+                                Item Aktif
+                            </p>
+
+                            <p class="mt-2 text-2xl font-extrabold text-sky-800">
+                                {{ $activeLoanItems->count() }}
+                            </p>
+                        </div>
+                    </div>
+
+                    <div class="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+                        Setelah dikonfirmasi, status item yang dipilih akan berubah menjadi dikembalikan dan stok buku akan diperbarui sesuai kondisi kembali.
+                    </div>
+
+                    <div class="flex flex-col-reverse gap-3 border-t border-gray-100 pt-5 sm:flex-row sm:justify-end">
+                        <button
+                            type="button"
+                            @click="closeReturnConfirmModal()"
+                            class="inline-flex items-center justify-center rounded-2xl border border-gray-200 bg-white px-5 py-3 text-sm font-bold text-gray-600 transition hover:bg-gray-50"
+                        >
+                            Periksa Lagi
+                        </button>
+
+                        <button
+                            type="button"
+                            @click="submitReturnForm()"
+                            class="inline-flex items-center justify-center gap-2 rounded-2xl bg-emerald-700 px-5 py-3 text-sm font-bold text-white shadow-lg shadow-emerald-700/20 transition hover:bg-emerald-800"
+                        >
+                            <span class="material-symbols-outlined text-[18px]">task_alt</span>
+                            Ya, Proses Pengembalian
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+        @endif
+
+        <script>
+            function returnConfirmation() {
+                return {
+                    returnConfirmModalOpen: false,
+                    returnConfirmError: '',
+                    selectedReturnItemCount: 0,
+
+                    returnItemCheckboxes() {
+                        return Array.from(document.querySelectorAll('.return-item-checkbox'));
+                    },
+
+                    checkedReturnItemCount() {
+                        return this.returnItemCheckboxes().filter(function (checkbox) {
+                            return checkbox.checked;
+                        }).length;
+                    },
+
+                    openReturnConfirmModal() {
+                        this.selectedReturnItemCount = this.checkedReturnItemCount();
+
+                        if (this.selectedReturnItemCount < 1) {
+                            this.returnConfirmError = 'Pilih minimal satu buku yang ingin dikembalikan.';
+                            return;
+                        }
+
+                        this.returnConfirmError = '';
+                        this.returnConfirmModalOpen = true;
+                    },
+
+                    closeReturnConfirmModal() {
+                        this.returnConfirmModalOpen = false;
+                    },
+
+                    selectAllReturnItems() {
+                        this.returnItemCheckboxes().forEach(function (checkbox) {
+                            checkbox.checked = true;
+                        });
+
+                        this.returnConfirmError = '';
+                    },
+
+                    clearReturnItems() {
+                        this.returnItemCheckboxes().forEach(function (checkbox) {
+                            checkbox.checked = false;
+                        });
+
+                        this.returnConfirmError = '';
+                    },
+
+                    submitReturnForm() {
+                        this.$refs.returnForm.submit();
+                    },
+                };
+            }
+        </script>
     </div>
 </x-app-layout>
+    

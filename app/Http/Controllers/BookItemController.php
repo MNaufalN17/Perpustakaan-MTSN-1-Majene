@@ -75,11 +75,24 @@ class BookItemController extends Controller
             ->orderBy('title')
             ->get();
 
+        $booksData = $books->map(function (Book $book) {
+            return [
+                'id' => $book->id,
+                'title' => $book->title,
+                'author' => $book->author,
+                'ddc_code' => $this->cleanCode($book->ddcClass?->code, 'BK'),
+                'author_code' => $this->cleanCode($book->author_code ?: $this->makeAuthorCode($book->author), 'UNK'),
+                'title_code' => $this->cleanCode($book->title_code ?: $this->makeTitleCode($book->title), 'b'),
+                'next_index' => $this->nextCopyNumber((int) $book->id),
+            ];
+        })->values();
+
         $statusOptions = $this->statusOptions();
         $conditionOptions = $this->conditionOptions();
 
         return view('pustakawan.book_items.create', compact(
             'books',
+            'booksData',
             'statusOptions',
             'conditionOptions'
         ));
@@ -89,6 +102,10 @@ class BookItemController extends Controller
     {
         if (!auth()->check() || (int) auth()->user()->role_id !== 1) {
             abort(403, 'Anda tidak memiliki akses.');
+        }
+
+        if ($request->has('items')) {
+            return $this->storeMany($request);
         }
 
         $validated = $request->validate([
@@ -111,13 +128,14 @@ class BookItemController extends Controller
         ]);
 
         $book = Book::with(['ddcClass'])->findOrFail($validated['book_id']);
+        $codeParts = $this->bookCodeParts($book);
 
         $copyNumber = $validated['copy_number'] ?? $this->nextCopyNumber((int) $validated['book_id']);
 
         $itemCode = trim((string) ($validated['item_code'] ?? ''));
 
         if ($itemCode === '') {
-            $itemCode = $this->generateItemCode($book, $copyNumber, $validated);
+            $itemCode = $this->generateItemCode($book, $copyNumber, $codeParts);
         }
 
         if (BookItem::where('item_code', $itemCode)->exists()) {
@@ -134,10 +152,10 @@ class BookItemController extends Controller
         $bookItem = BookItem::create($this->filterColumns('book_items', [
             'book_id' => $validated['book_id'],
             'item_code' => $itemCode,
-            'classification_code' => $validated['classification_code'] ?? null,
-            'author_code' => $validated['author_code'] ?? null,
-            'title_code' => $validated['title_code'] ?? null,
-            'title_initial' => $validated['title_initial'] ?? null,
+            'classification_code' => $validated['classification_code'] ?? $codeParts['classification_code'],
+            'author_code' => $validated['author_code'] ?? $codeParts['author_code'],
+            'title_code' => $validated['title_code'] ?? $codeParts['title_code'],
+            'title_initial' => $validated['title_initial'] ?? $codeParts['title_code'],
             'copy_number' => $copyNumber,
             'status' => $status,
             'condition' => $condition,
@@ -150,6 +168,78 @@ class BookItemController extends Controller
             ->with('success_title', 'Eksemplar berhasil ditambahkan')
             ->with('success_message', 'Copy "' . ($bookItem->item_code ?? '-') . '" berhasil ditambahkan.')
             ->with('success_detail', 'Eksemplar baru sudah masuk ke stok perpustakaan.');
+    }
+
+    private function storeMany(Request $request)
+    {
+        $validated = $request->validate([
+            'book_id' => ['required', 'integer', 'exists:books,id'],
+            'items' => ['required', 'array', 'min:1', 'max:200'],
+            'items.*.copy_number' => ['required', 'integer', 'min:1', 'distinct'],
+            'items.*.status' => ['required', 'string', Rule::in(['tersedia', 'dipinjam', 'rusak', 'hilang', 'nonaktif'])],
+            'items.*.condition' => ['required', 'string', Rule::in(['baik', 'rusak ringan', 'rusak berat', 'hilang'])],
+        ], [
+            'book_id.required' => 'Buku induk wajib dipilih.',
+            'book_id.exists' => 'Buku induk yang dipilih tidak ditemukan.',
+            'items.required' => 'Minimal satu eksemplar wajib dibuat.',
+            'items.min' => 'Minimal satu eksemplar wajib dibuat.',
+            'items.max' => 'Maksimal 200 eksemplar dalam satu kali simpan.',
+            'items.*.copy_number.required' => 'Nomor copy wajib diisi.',
+            'items.*.copy_number.distinct' => 'Nomor copy tidak boleh sama dalam satu kali simpan.',
+        ]);
+
+        $book = Book::with(['ddcClass'])->findOrFail($validated['book_id']);
+        $codeParts = $this->bookCodeParts($book);
+        $rows = collect($validated['items'])->values();
+
+        $existingCopyNumbers = BookItem::where('book_id', $book->id)
+            ->whereIn('copy_number', $rows->pluck('copy_number')->all())
+            ->pluck('copy_number')
+            ->map(fn ($copyNumber) => (int) $copyNumber)
+            ->all();
+
+        if (!empty($existingCopyNumbers)) {
+            return back()
+                ->withInput()
+                ->withErrors([
+                    'items' => 'Nomor copy ' . implode(', ', $existingCopyNumbers) . ' sudah tersedia untuk buku ini.',
+                ]);
+        }
+
+        $createdCount = 0;
+        $firstItemCode = null;
+
+        DB::transaction(function () use ($book, $codeParts, $rows, &$createdCount, &$firstItemCode) {
+            foreach ($rows as $row) {
+                $copyNumber = (int) $row['copy_number'];
+                $condition = $row['condition'];
+                $status = $row['status'] ?: $this->statusFromCondition($condition);
+                $itemCode = $this->generateItemCode($book, $copyNumber, $codeParts);
+
+                $bookItem = BookItem::create($this->filterColumns('book_items', [
+                    'book_id' => $book->id,
+                    'item_code' => $itemCode,
+                    'classification_code' => $codeParts['classification_code'],
+                    'author_code' => $codeParts['author_code'],
+                    'title_code' => $codeParts['title_code'],
+                    'title_initial' => $codeParts['title_code'],
+                    'copy_number' => $copyNumber,
+                    'status' => $status,
+                    'condition' => $condition,
+                    'location' => null,
+                    'acquisition_date' => null,
+                ]));
+
+                $createdCount++;
+                $firstItemCode ??= $bookItem->item_code;
+            }
+        });
+
+        return redirect()
+            ->route('book_items.index')
+            ->with('success_title', 'Eksemplar berhasil ditambahkan')
+            ->with('success_message', $createdCount . ' eksemplar untuk buku "' . $book->title . '" berhasil ditambahkan.')
+            ->with('success_detail', 'Kode pertama: ' . ($firstItemCode ?? '-') . '. Stok fisik buku sudah diperbarui.');
     }
 
     public function show(BookItem $bookItem)
@@ -463,6 +553,33 @@ class BookItemController extends Controller
         }
 
         return $itemCode;
+    }
+
+    private function bookCodeParts(Book $book): array
+    {
+        return [
+            'classification_code' => $this->cleanCode($book->ddcClass?->code, 'BK'),
+            'author_code' => $this->cleanCode($book->author_code ?: $this->makeAuthorCode($book->author), 'UNK'),
+            'title_code' => $this->cleanCode($book->title_code ?: $this->makeTitleCode($book->title), 'b'),
+        ];
+    }
+
+    private function makeAuthorCode(?string $author): string
+    {
+        $letters = preg_replace('/[^A-Za-z0-9]/', '', (string) $author);
+
+        return $letters !== ''
+            ? Str::title(Str::substr($letters, 0, 4))
+            : 'UNK';
+    }
+
+    private function makeTitleCode(?string $title): string
+    {
+        $letters = preg_replace('/[^A-Za-z0-9]/', '', (string) $title);
+
+        return $letters !== ''
+            ? Str::lower(Str::substr($letters, 0, 1))
+            : 'b';
     }
 
     private function cleanCode(?string $value, string $fallback): string

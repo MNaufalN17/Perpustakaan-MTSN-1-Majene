@@ -48,8 +48,8 @@
                 'id' => (string) $item->id,
                 'item_code' => $item->item_code ?? '-',
                 'copy_number' => $item->copy_number ?? '-',
-                'book_title' => $item->book->title ?? '-',
-                'author' => $item->book->author ?? '-',
+                'book_title' => $item->book?->title ?? '-',
+                'author' => $item->book?->author ?? '-',
                 'status' => $item->status ?? '-',
                 'status_label' => $statusLabels[$item->status] ?? ucwords((string) $item->status),
                 'condition' => $item->condition ?? '-',
@@ -112,7 +112,22 @@
         @keydown.escape.window="closeAllModals()"
         class="min-h-screen bg-gradient-to-br from-slate-50 via-emerald-50/40 to-sky-50/40 py-10"
     >
-        <form x-ref="singleProcessForm" method="POST" :action="approval.action" class="hidden">
+        <form x-ref="singleProcessForm" method="POST" action="" class="hidden">
+            @csrf
+            @method('DELETE')
+        </form>
+
+        <form x-ref="restoreStockForm" method="POST" action="" class="hidden">
+            @csrf
+            @method('PATCH')
+        </form>
+
+        <form
+            x-ref="bulkSubmitForm"
+            method="POST"
+            action="{{ route('book_items.bulk_destroy') }}"
+            class="hidden"
+        >
             @csrf
             @method('DELETE')
         </form>
@@ -273,6 +288,13 @@
 
                                             $canProcessSingle = !$isActiveLoan && !($isOutOfStock && $hasLoanHistory);
 
+                                            $isRestorable = $bookItem->status === 'nonaktif'
+                                                && !$isActiveLoan
+                                                && in_array($bookItem->condition, ['baik', 'rusak ringan'], true);
+
+                                            $needsConditionRepair = $bookItem->status === 'nonaktif'
+                                                && in_array($bookItem->condition, ['hilang', 'rusak berat'], true);
+
                                             $statusLabel = $statusLabels[$bookItem->status] ?? ucwords((string) $bookItem->status);
                                             $conditionLabel = $conditionLabels[$bookItem->condition] ?? ucwords((string) $bookItem->condition);
 
@@ -281,6 +303,16 @@
                                                 $infoText = 'Selesaikan pengembalian terlebih dahulu sebelum copy ini diproses.';
                                                 $infoClass = 'border-amber-200 bg-amber-50 text-amber-700';
                                                 $infoIcon = 'schedule';
+                                            } elseif ($isRestorable) {
+                                                $infoTitle = 'Keluar dari Stok';
+                                                $infoText = 'Copy ini bisa dimasukkan kembali ke stok.';
+                                                $infoClass = 'border-emerald-200 bg-emerald-50 text-emerald-700';
+                                                $infoIcon = 'inventory_2';
+                                            } elseif ($needsConditionRepair) {
+                                                $infoTitle = 'Kondisi Belum Layak';
+                                                $infoText = 'Ubah kondisi terlebih dahulu sebelum masuk stok.';
+                                                $infoClass = 'border-amber-200 bg-amber-50 text-amber-700';
+                                                $infoIcon = 'build';
                                             } elseif ($isOutOfStock && $hasLoanHistory) {
                                                 $infoTitle = 'Keluar dari Stok';
                                                 $infoText = 'Copy ini disimpan hanya untuk riwayat transaksi.';
@@ -298,12 +330,42 @@
                                                 $infoIcon = 'check_circle';
                                             }
 
-                                            if ($canProcessSingle) {
+                                            if ($isRestorable) {
+                                                $approvalPayload = [
+                                                    'type' => 'restore',
+                                                    'action' => route('book_items.restore_to_stock', $bookItem),
+                                                    'title' => $bookItem->item_code ?? 'Eksemplar',
+                                                    'subtitle' => $bookItem->book?->title ?? '-',
+                                                    'message' => 'Copy ini akan dimasukkan kembali ke stok dan bisa digunakan lagi.',
+                                                    'confirm_text' => 'Masukkan ke Stok',
+                                                    'tone' => 'emerald',
+                                                    'icon' => 'inventory_2',
+                                                ];
+
+                                                $actionLabel = 'Masukkan';
+                                                $actionIcon = 'inventory_2';
+                                                $actionClass = 'border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100';
+                                            } elseif ($needsConditionRepair) {
+                                                $approvalPayload = [
+                                                    'type' => 'info',
+                                                    'action' => '',
+                                                    'title' => $bookItem->item_code ?? 'Eksemplar',
+                                                    'subtitle' => $bookItem->book?->title ?? '-',
+                                                    'message' => 'Copy ini belum bisa dimasukkan ke stok karena kondisinya masih hilang atau rusak berat. Ubah kondisi melalui menu Edit terlebih dahulu.',
+                                                    'confirm_text' => 'Mengerti',
+                                                    'tone' => 'amber',
+                                                    'icon' => 'build',
+                                                ];
+
+                                                $actionLabel = 'Info';
+                                                $actionIcon = 'info';
+                                                $actionClass = 'border-amber-200 bg-amber-50 text-amber-700 hover:bg-amber-100';
+                                            } elseif ($canProcessSingle) {
                                                 $approvalPayload = [
                                                     'type' => 'single',
                                                     'action' => route('book_items.destroy', $bookItem),
                                                     'title' => $bookItem->item_code ?? 'Eksemplar',
-                                                    'subtitle' => $bookItem->book->title ?? '-',
+                                                    'subtitle' => $bookItem->book?->title ?? '-',
                                                     'message' => $hasLoanHistory
                                                         ? 'Copy ini pernah dipinjam. Sistem tidak akan menghapus permanen, tetapi mengeluarkannya dari stok agar riwayat tetap aman.'
                                                         : 'Copy ini belum memiliki riwayat peminjaman. Data copy akan dihapus permanen.',
@@ -311,19 +373,29 @@
                                                     'tone' => $hasLoanHistory ? 'sky' : 'red',
                                                     'icon' => $hasLoanHistory ? 'archive' : 'delete_forever',
                                                 ];
+
+                                                $actionLabel = $hasLoanHistory ? 'Keluarkan' : 'Hapus';
+                                                $actionIcon = $hasLoanHistory ? 'archive' : 'delete';
+                                                $actionClass = $hasLoanHistory
+                                                    ? 'border-sky-200 bg-sky-50 text-sky-700 hover:bg-sky-100'
+                                                    : 'border-red-200 bg-red-50 text-red-700 hover:bg-red-100';
                                             } else {
                                                 $approvalPayload = [
                                                     'type' => 'info',
                                                     'action' => '',
                                                     'title' => $bookItem->item_code ?? 'Eksemplar',
-                                                    'subtitle' => $bookItem->book->title ?? '-',
+                                                    'subtitle' => $bookItem->book?->title ?? '-',
                                                     'message' => $isActiveLoan
                                                         ? 'Copy ini sedang dipinjam. Selesaikan pengembalian terlebih dahulu.'
-                                                        : 'Copy ini sudah dikeluarkan dari stok dan masih menyimpan riwayat transaksi, sehingga tidak perlu diproses lagi.',
+                                                        : 'Copy ini sudah dikeluarkan dari stok dan masih menyimpan riwayat transaksi.',
                                                     'confirm_text' => 'Mengerti',
                                                     'tone' => $isActiveLoan ? 'amber' : 'gray',
                                                     'icon' => $isActiveLoan ? 'schedule' : 'inventory_2',
                                                 ];
+
+                                                $actionLabel = 'Info';
+                                                $actionIcon = 'info';
+                                                $actionClass = 'border-gray-200 bg-gray-50 text-gray-500 hover:bg-gray-100';
                                             }
 
                                             $approvalPayloadEncoded = base64_encode(json_encode($approvalPayload));
@@ -346,11 +418,11 @@
 
                                             <td class="px-5 py-5">
                                                 <p class="break-words text-sm font-extrabold leading-5 text-gray-950">
-                                                    {{ $bookItem->book->title ?? '-' }}
+                                                    {{ $bookItem->book?->title ?? '-' }}
                                                 </p>
 
                                                 <p class="mt-1 break-words text-xs text-gray-500">
-                                                    {{ $bookItem->book->author ?? '-' }}
+                                                    {{ $bookItem->book?->author ?? '-' }}
                                                 </p>
                                             </td>
 
@@ -416,17 +488,13 @@
                                                             type="button"
                                                             data-approval-payload="{{ $approvalPayloadEncoded }}"
                                                             @click="openApprovalFromButton($event.currentTarget)"
-                                                            class="inline-flex h-9 items-center justify-center gap-1 rounded-xl border px-2 text-xs font-extrabold transition
-                                                                {{ $canProcessSingle
-                                                                    ? ($hasLoanHistory ? 'border-sky-200 bg-sky-50 text-sky-700 hover:bg-sky-100' : 'border-red-200 bg-red-50 text-red-700 hover:bg-red-100')
-                                                                    : 'border-gray-200 bg-gray-50 text-gray-500 hover:bg-gray-100'
-                                                                }}"
+                                                            class="inline-flex h-9 items-center justify-center gap-1 rounded-xl border px-2 text-xs font-extrabold transition {{ $actionClass }}"
                                                         >
                                                             <span class="material-symbols-outlined text-[15px]">
-                                                                {{ $canProcessSingle ? ($hasLoanHistory ? 'archive' : 'delete') : 'info' }}
+                                                                {{ $actionIcon }}
                                                             </span>
 
-                                                            {{ $canProcessSingle ? ($hasLoanHistory ? 'Keluarkan' : 'Hapus') : 'Info' }}
+                                                            {{ $actionLabel }}
                                                         </button>
                                                     @endif
                                                 </div>
@@ -501,18 +569,9 @@
 
                 <form
                     x-ref="bulkProcessForm"
-                    method="POST"
-                    action="{{ route('book_items.bulk_destroy') }}"
                     @submit.prevent="requestBulkProcess()"
                     class="flex min-h-0 flex-1 flex-col"
                 >
-                    @csrf
-                    @method('DELETE')
-
-                    <template x-for="id in selectedIds" :key="'bulk-selected-' + id">
-                        <input type="hidden" name="book_item_ids[]" :value="id">
-                    </template>
-
                     <div class="shrink-0 border-b border-gray-100 bg-slate-50 px-6 py-4">
                         <div class="grid gap-3 md:grid-cols-4">
                             <div class="rounded-2xl border border-white bg-white px-4 py-3 shadow-sm">
@@ -895,8 +954,14 @@
                         }
 
                         if (this.approval.type === 'bulk') {
+                            this.submitBulkSelectedIds();
+                            return;
+                        }
+
+                        if (this.approval.type === 'restore') {
                             this.$nextTick(() => {
-                                this.$refs.bulkProcessForm.submit();
+                                this.$refs.restoreStockForm.setAttribute('action', this.approval.action);
+                                this.$refs.restoreStockForm.submit();
                             });
 
                             return;
@@ -904,9 +969,44 @@
 
                         if (this.approval.type === 'single') {
                             this.$nextTick(() => {
+                                this.$refs.singleProcessForm.setAttribute('action', this.approval.action);
                                 this.$refs.singleProcessForm.submit();
                             });
                         }
+                    },
+
+                    submitBulkSelectedIds() {
+                        this.selectedIds = [...new Set(
+                            this.selectedIds
+                                .map((id) => String(id))
+                                .filter((id) => id !== '')
+                        )];
+
+                        if (this.selectedIds.length < 1) {
+                            this.closeApprovalModal();
+                            this.bulkError = 'Pilih minimal satu copy yang bisa diproses.';
+                            this.bulkModalOpen = true;
+                            return;
+                        }
+
+                        const form = this.$refs.bulkSubmitForm;
+
+                        form.querySelectorAll('input[data-bulk-dynamic="1"]').forEach((input) => {
+                            input.remove();
+                        });
+
+                        this.selectedIds.forEach((id) => {
+                            const input = document.createElement('input');
+
+                            input.type = 'hidden';
+                            input.name = 'book_item_ids[]';
+                            input.value = String(id);
+                            input.setAttribute('data-bulk-dynamic', '1');
+
+                            form.appendChild(input);
+                        });
+
+                        form.submit();
                     },
 
                     badgeText(item) {

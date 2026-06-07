@@ -88,7 +88,7 @@ Route::middleware(['auth', 'verified'])->group(function () {
             $popularBooks = Book::withCount([
                 'bookItems as borrow_count' => function ($query) {
                     $query->join('loan_items', 'book_items.id', '=', 'loan_items.book_item_id');
-                }
+                },
             ])
                 ->orderByDesc('borrow_count')
                 ->limit(4)
@@ -162,38 +162,48 @@ Route::middleware(['auth', 'verified'])->group(function () {
             ->name('kepala_sekolah.reports.damaged_lost.download');
 
         Route::get('/kepala/dashboard', function () {
-            return redirect()->route('kepala_sekolah.dashboar   d');
+            return redirect()->route('kepala_sekolah.dashboard');
         })->name('kepala.dashboard');
     });
 
-   Route::middleware('role:1')->group(function () {
-    Route::get('/pustakawan/dashboard', function () {
-        return redirect()->route('dashboard');
-    })->name('pustakawan.dashboard');
+    Route::middleware('role:1')->group(function () {
+        Route::get('/pustakawan/dashboard', function () {
+            return redirect()->route('dashboard');
+        })->name('pustakawan.dashboard');
 
-    Route::resource('loans', LoanController::class);
+        Route::get('/loans/class-bulk/create', [LoanController::class, 'classBulkCreate'])
+            ->name('loans.class_bulk.create');
 
-    Route::post('/members/quick-store', [MemberController::class, 'quickStore'])
-        ->name('members.quick_store');
+        Route::post('/loans/class-bulk', [LoanController::class, 'classBulkStore'])
+            ->name('loans.class_bulk.store');
 
-    Route::resource('books', BookController::class)
-        ->except(['index', 'show']);
+        Route::resource('loans', LoanController::class);
 
-    Route::delete('/book_items/bulk-destroy', [BookItemController::class, 'bulkDestroy'])
-        ->name('book_items.bulk_destroy');
+        Route::post('/members/quick-store', [MemberController::class, 'quickStore'])
+            ->name('members.quick_store');
 
-    Route::resource('book_items', BookItemController::class)
-        ->except(['index', 'show']);
+        Route::resource('books', BookController::class)
+            ->except(['index', 'show']);
 
-    Route::resource('members', MemberController::class)
-        ->except(['index', 'show']);
+        Route::delete('/book_items/bulk-destroy', [BookItemController::class, 'bulkDestroy'])
+            ->name('book_items.bulk_destroy');
 
-    Route::resource('classes', StudentClassController::class);
+        Route::patch('/book_items/{book_item}/restore-to-stock', [BookItemController::class, 'restoreToStock'])
+            ->name('book_items.restore_to_stock');
 
-    Route::resource('categories', CategoryController::class);
+        Route::resource('book_items', BookItemController::class)
+            ->except(['index', 'show']);
 
-    Route::resource('ddc', DdcClassController::class);
-});
+        Route::resource('members', MemberController::class)
+            ->except(['index', 'show']);
+
+        Route::resource('classes', StudentClassController::class);
+
+        Route::resource('categories', CategoryController::class);
+
+        Route::resource('ddc', DdcClassController::class);
+    });
+
     Route::middleware('role:1,2')->group(function () {
         Route::resource('books', BookController::class)
             ->only(['index', 'show']);

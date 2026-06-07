@@ -110,6 +110,18 @@
                             </p>
                         </div>
                     </div>
+
+                    <div class="relative mt-5 flex flex-wrap gap-2 text-xs font-bold">
+                        <span class="inline-flex items-center gap-2 rounded-full border border-white/25 bg-white/15 px-3 py-1.5 text-white">
+                            <span class="h-2.5 w-2.5 rounded-full bg-white"></span>
+                            Peminjaman Biasa
+                        </span>
+
+                        <span class="inline-flex items-center gap-2 rounded-full border border-amber-100 bg-amber-100 px-3 py-1.5 text-amber-800">
+                            <span class="h-2.5 w-2.5 rounded-full bg-amber-500"></span>
+                            Perwakilan Kelas
+                        </span>
+                    </div>
                 </div>
 
                 <div class="border-b border-gray-100 bg-white/80 p-6">
@@ -202,6 +214,33 @@
                                             default => 'border-gray-200 bg-gray-50 text-gray-600',
                                         };
 
+                                        $bookIds = $loan->loanItems
+                                            ->map(fn ($loanItem) => $loanItem->bookItem?->book_id)
+                                            ->filter()
+                                            ->unique()
+                                            ->values();
+
+                                        $isClassLoan = str_contains(
+                                            strtolower((string) ($loan->notes ?? '')),
+                                            'peminjaman kelas/rombongan'
+                                        ) || ($loan->loanItems->count() > 1 && $bookIds->count() === 1);
+
+                                        $rowClass = $isClassLoan
+                                            ? 'bg-amber-100/80 hover:bg-amber-200/70'
+                                            : 'bg-white hover:bg-emerald-50/40';
+
+                                        $loanTypeLabel = $isClassLoan
+                                            ? 'Perwakilan Kelas'
+                                            : 'Peminjaman Biasa';
+
+                                        $loanTypeBadgeClass = $isClassLoan
+                                            ? 'border-amber-300 bg-amber-200 text-amber-950'
+                                            : 'border-slate-200 bg-slate-50 text-slate-600';
+
+                                        $loanTypeDescription = $isClassLoan
+                                            ? 'Diwakili 1 anggota untuk beberapa eksemplar buku yang sama.'
+                                            : 'Transaksi mandiri anggota.';
+
                                         $canCancel = in_array($loan->status, ['aktif', 'terlambat'], true);
                                         $canProcess = in_array($loan->status, ['aktif', 'terlambat'], true);
 
@@ -212,6 +251,9 @@
 
                                         $firstBookTitle = $bookTitles->first() ?? '-';
                                         $otherBookCount = max($bookTitles->count() - 1, 0);
+                                        $otherBookLabel = $isClassLoan
+                                            ? '+' . $otherBookCount . ' eksemplar lain'
+                                            : '+' . $otherBookCount . ' buku lain';
 
                                         $cancelPayload = [
                                             'action' => route('loans.destroy', $loan),
@@ -227,8 +269,8 @@
                                         $cancelPayloadEncoded = base64_encode(json_encode($cancelPayload));
                                     @endphp
 
-                                    <tr class="transition hover:bg-emerald-50/40">
-                                        <td class="px-5 py-5 align-middle">
+                                    <tr class="{{ $rowClass }} transition">
+                                        <td class="border-l-[6px] {{ $isClassLoan ? 'border-amber-500' : 'border-transparent' }} px-5 py-5 align-middle">
                                             <div>
                                                 <p class="font-mono text-sm font-extrabold text-gray-900">
                                                     {{ $loanCode }}
@@ -236,6 +278,14 @@
 
                                                 <p class="mt-1 text-xs text-gray-500">
                                                     ID Transaksi: {{ $loan->id }}
+                                                </p>
+
+                                                <span class="mt-3 inline-flex rounded-full border px-3 py-1 text-[11px] font-bold {{ $loanTypeBadgeClass }}">
+                                                    {{ $loanTypeLabel }}
+                                                </span>
+
+                                                <p class="mt-2 max-w-[190px] text-[11px] leading-4 {{ $isClassLoan ? 'font-semibold text-amber-900' : 'text-gray-400' }}">
+                                                    {{ $loanTypeDescription }}
                                                 </p>
                                             </div>
                                         </td>
@@ -269,7 +319,7 @@
 
                                                     @if($otherBookCount > 0)
                                                         <span class="inline-flex rounded-full border border-sky-100 bg-sky-50 px-3 py-1 text-[11px] font-bold text-sky-700">
-                                                            +{{ $otherBookCount }} buku lain
+                                                            {{ $otherBookLabel }}
                                                         </span>
                                                     @endif
                                                 </div>

@@ -27,17 +27,6 @@
         x-init="init()"
     >
         <div class="mx-auto max-w-7xl sm:px-6 lg:px-8">
-            @if ($errors->any())
-                <div class="mb-5 rounded-2xl border border-red-200 bg-red-50 p-4 text-sm text-red-700 shadow-sm">
-                    <div class="font-bold mb-2">Data eksemplar belum bisa disimpan:</div>
-                    <ul class="list-disc list-inside space-y-1">
-                        @foreach ($errors->all() as $error)
-                            <li>{{ $error }}</li>
-                        @endforeach
-                    </ul>
-                </div>
-            @endif
-
             <div class="overflow-hidden rounded-[2rem] border border-white/70 bg-white/80 shadow-[0_20px_60px_rgba(15,23,42,0.08)] backdrop-blur-xl">
                 <div class="relative overflow-hidden bg-gradient-to-r from-emerald-700 to-teal-500 p-6 text-white">
                     <div class="relative flex items-center gap-4">

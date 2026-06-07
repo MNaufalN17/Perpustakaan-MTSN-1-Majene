@@ -12,6 +12,9 @@
             }
         }
 
+        $normalMaxLoanItems = (int) ($normalMaxLoanItems ?? \App\Models\SystemSetting::intValue('max_normal_loan_items', 3));
+        $loanDurationDays = (int) ($loanDurationDays ?? \App\Models\SystemSetting::intValue('loan_duration_days', 7));
+
         $borrowedIds = collect($borrowedBookItemIds ?? [])
             ->map(fn ($id) => (string) $id)
             ->values();
@@ -48,18 +51,12 @@
                 'book_title' => $item->book->title ?? '-',
                 'author' => $item->book->author ?? '-',
                 'publisher' => $item->book->publisher ?? '-',
-                'classification_code' => $item->classification_code ?? null,
-                'author_code' => $item->author_code ?? null,
-                'title_code' => $titleCode,
                 'is_borrowed_active' => $borrowedIds->contains((string) $item->id),
                 'search' => strtolower(
                     ($item->item_code ?? '') . ' ' .
                     ($item->copy_number ?? '') . ' ' .
                     ($item->status ?? '') . ' ' .
                     ($item->condition ?? '') . ' ' .
-                    ($item->classification_code ?? '') . ' ' .
-                    ($item->author_code ?? '') . ' ' .
-                    ($titleCode ?? '') . ' ' .
                     ($item->book->title ?? '') . ' ' .
                     ($item->book->author ?? '') . ' ' .
                     ($item->book->publisher ?? '')
@@ -86,15 +83,23 @@
                 </h2>
 
                 <p class="mt-1 text-sm text-gray-500">
-                    Pilih anggota dan buku yang akan dipinjam.
+                    Peminjaman biasa maksimal {{ $normalMaxLoanItems }} eksemplar. Batas ini diatur oleh Admin IT.
                 </p>
             </div>
 
-            <a href="{{ route('loans.index') }}"
-               class="inline-flex items-center justify-center gap-2 rounded-2xl border border-gray-200 bg-white px-5 py-3 text-sm font-bold text-gray-600 transition hover:bg-gray-50">
-                <span class="material-symbols-outlined text-[18px]">arrow_back</span>
-                Kembali
-            </a>
+            <div class="flex flex-col gap-2 sm:flex-row">
+                <a href="{{ route('loans.class_bulk.create') }}"
+                   class="inline-flex items-center justify-center gap-2 rounded-2xl bg-amber-500 px-5 py-3 text-sm font-bold text-white shadow-lg shadow-amber-500/20 transition hover:bg-amber-600">
+                    <span class="material-symbols-outlined text-[18px]">groups</span>
+                    Peminjaman Kelas
+                </a>
+
+                <a href="{{ route('loans.index') }}"
+                   class="inline-flex items-center justify-center gap-2 rounded-2xl border border-gray-200 bg-white px-5 py-3 text-sm font-bold text-gray-600 transition hover:bg-gray-50">
+                    <span class="material-symbols-outlined text-[18px]">arrow_back</span>
+                    Kembali
+                </a>
+            </div>
         </div>
     </x-slot>
 
@@ -108,6 +113,7 @@
                 'csrfToken' => csrf_token(),
                 'oldMemberId' => old('member_id'),
                 'oldBookItemIds' => old('book_item_ids', []),
+                'maxNormalLoanItems' => $normalMaxLoanItems,
             ])
         )"
     >
@@ -152,14 +158,13 @@
                             </h3>
 
                             <p class="mt-1 text-sm text-emerald-50">
-                                Pastikan anggota dan eksemplar buku yang dipilih sudah benar.
+                                Untuk peminjaman banyak copy satu kelas, gunakan tombol Peminjaman Kelas.
                             </p>
                         </div>
                     </div>
                 </div>
 
                 <div class="space-y-6 p-6">
-
                     <div
                         x-show="formError"
                         x-cloak
@@ -253,24 +258,6 @@
                                 </div>
                             </div>
                         </div>
-
-                        <div
-                            x-show="selectedMember"
-                            x-cloak
-                            class="mt-4 rounded-2xl border border-emerald-100 bg-emerald-50 p-4"
-                        >
-                            <p class="text-xs font-bold uppercase tracking-[0.14em] text-emerald-700">
-                                Anggota Terpilih
-                            </p>
-
-                            <p class="mt-2 font-extrabold text-gray-900" x-text="selectedMember?.name"></p>
-
-                            <p class="mt-1 text-sm text-gray-600">
-                                <span x-text="selectedMember?.nis_nip || '-'"></span>
-                                <span> — </span>
-                                <span x-text="selectedMember?.class || 'Guru/Staff'"></span>
-                            </p>
-                        </div>
                     </section>
 
                     <section class="rounded-3xl border border-gray-100 bg-white p-5 shadow-sm">
@@ -303,7 +290,7 @@
                                     id="due_date"
                                     name="due_date"
                                     type="date"
-                                    value="{{ old('due_date', now()->addDays(7)->format('Y-m-d')) }}"
+                                    value="{{ old('due_date', now()->addDays($loanDurationDays)->format('Y-m-d')) }}"
                                     required
                                     class="mt-2 block w-full rounded-2xl border border-gray-200 bg-slate-50 px-4 py-3 text-sm focus:border-emerald-500 focus:ring-2 focus:ring-emerald-100"
                                 >
@@ -319,7 +306,7 @@
                                 </h4>
 
                                 <p class="mt-1 text-xs text-gray-500">
-                                    Bisa memilih lebih dari satu eksemplar buku.
+                                    Maksimal <span class="font-bold">{{ $normalMaxLoanItems }}</span> eksemplar untuk peminjaman biasa.
                                 </p>
                             </div>
 
@@ -367,7 +354,7 @@
                                             x-model="row.search"
                                             @focus="row.open = true"
                                             @input="row.open = true"
-                                            placeholder="Ketik judul buku, kode eksemplar, penulis, atau kode klasifikasi..."
+                                            placeholder="Ketik judul buku, kode eksemplar, atau penulis..."
                                             class="w-full rounded-2xl border border-gray-200 bg-white px-12 py-3 text-sm focus:border-emerald-500 focus:ring-2 focus:ring-emerald-100"
                                             autocomplete="off"
                                         >
@@ -404,11 +391,6 @@
                                                             <span> — </span>
                                                             <span x-text="item.author || '-'"></span>
                                                         </p>
-
-                                                        <p class="mt-1 text-xs text-gray-400">
-                                                            Kondisi:
-                                                            <span x-text="formatText(item.condition || '-')"></span>
-                                                        </p>
                                                     </div>
 
                                                     <span class="rounded-full border border-emerald-100 bg-emerald-50 px-3 py-1 text-xs font-bold text-emerald-700">
@@ -441,8 +423,6 @@
                                             <span x-text="selectedBook(row)?.item_code || '-'"></span>
                                             <span> — Copy </span>
                                             <span x-text="selectedBook(row)?.copy_number || '-'"></span>
-                                            <span> — </span>
-                                            <span x-text="selectedBook(row)?.author || '-'"></span>
                                         </p>
                                     </div>
                                 </div>
@@ -525,13 +505,6 @@
                         x-text="modalErrorMessage"
                     ></div>
 
-                    <div
-                        x-show="modalSuccessMessage"
-                        x-cloak
-                        class="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-semibold text-emerald-700"
-                        x-text="modalSuccessMessage"
-                    ></div>
-
                     <div>
                         <label class="block text-sm font-bold text-gray-700">
                             NIS / NIP <span class="text-red-500">*</span>
@@ -542,7 +515,6 @@
                             x-model="newNisNip"
                             required
                             class="mt-2 block w-full rounded-2xl border border-gray-200 bg-slate-50 px-4 py-3 text-sm focus:border-emerald-500 focus:ring-2 focus:ring-emerald-100"
-                            placeholder="Masukkan NIS / NIP"
                         >
                     </div>
 
@@ -556,19 +528,17 @@
                             x-model="newName"
                             required
                             class="mt-2 block w-full rounded-2xl border border-gray-200 bg-slate-50 px-4 py-3 text-sm focus:border-emerald-500 focus:ring-2 focus:ring-emerald-100"
-                            placeholder="Masukkan nama lengkap"
                         >
                     </div>
 
                     <div class="grid gap-4 md:grid-cols-2">
                         <div>
                             <label class="block text-sm font-bold text-gray-700">
-                                Jenis Kelamin <span class="text-red-500">*</span>
+                                Jenis Kelamin
                             </label>
 
                             <select
                                 x-model="newGender"
-                                required
                                 class="mt-2 block w-full rounded-2xl border border-gray-200 bg-slate-50 px-4 py-3 text-sm focus:border-emerald-500 focus:ring-2 focus:ring-emerald-100"
                             >
                                 <option value="laki-laki">Laki-laki</option>
@@ -578,12 +548,11 @@
 
                         <div>
                             <label class="block text-sm font-bold text-gray-700">
-                                Tipe Anggota <span class="text-red-500">*</span>
+                                Tipe Anggota
                             </label>
 
                             <select
                                 x-model="newMemberType"
-                                required
                                 class="mt-2 block w-full rounded-2xl border border-gray-200 bg-slate-50 px-4 py-3 text-sm focus:border-emerald-500 focus:ring-2 focus:ring-emerald-100"
                             >
                                 <option value="siswa">Siswa</option>
@@ -594,7 +563,7 @@
 
                     <div x-show="newMemberType === 'siswa'" x-cloak>
                         <label class="block text-sm font-bold text-gray-700">
-                            Kelas Siswa <span class="text-red-500">*</span>
+                            Kelas Siswa
                         </label>
 
                         <select
@@ -609,12 +578,6 @@
                                 </option>
                             @endforeach
                         </select>
-
-                        @if($classCollection->isEmpty())
-                            <p class="mt-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-semibold text-amber-700">
-                                Data kelas belum tersedia. Tambahkan kelas terlebih dahulu pada menu Kelas.
-                            </p>
-                        @endif
                     </div>
 
                     <div>
@@ -674,11 +637,9 @@
                 ],
 
                 formError: '',
-
                 showModal: false,
                 quickSaving: false,
                 modalErrorMessage: '',
-                modalSuccessMessage: '',
 
                 newNisNip: '',
                 newName: '',
@@ -711,10 +672,6 @@
                                 open: false,
                             };
                         });
-
-                        if (this.bookRows.length === 0) {
-                            this.addBookRow();
-                        }
                     }
                 },
 
@@ -744,6 +701,14 @@
                 },
 
                 addBookRow() {
+                    const max = parseInt(this.config.maxNormalLoanItems || 3);
+
+                    if (this.bookRows.length >= max) {
+                        this.formError = `Maksimal ${max} eksemplar untuk peminjaman biasa. Gunakan Peminjaman Kelas untuk jumlah besar.`;
+                        window.scrollTo({ top: 0, behavior: 'smooth' });
+                        return;
+                    }
+
                     this.bookRows.push({
                         key: Date.now() + Math.random(),
                         book_item_id: '',
@@ -778,12 +743,10 @@
                         .filter(item => {
                             const status = String(item.status || '').toLowerCase();
 
-                            const isAvailable = status === 'tersedia';
-                            const isNotBorrowedActive = !item.is_borrowed_active;
-                            const isNotSelected = !selectedIds.includes(String(item.id));
-                            const matchesKeyword = !keyword || (item.search || '').includes(keyword);
-
-                            return isAvailable && isNotBorrowedActive && isNotSelected && matchesKeyword;
+                            return status === 'tersedia'
+                                && !item.is_borrowed_active
+                                && !selectedIds.includes(String(item.id))
+                                && (!keyword || (item.search || '').includes(keyword));
                         })
                         .slice(0, 30);
                 },
@@ -808,6 +771,8 @@
                 validateMainForm(event) {
                     this.formError = '';
 
+                    const max = parseInt(this.config.maxNormalLoanItems || 3);
+
                     if (!this.selectedMember) {
                         event.preventDefault();
                         this.formError = 'Pilih anggota terlebih dahulu.';
@@ -819,21 +784,19 @@
                         event.preventDefault();
                         this.formError = 'Minimal pilih satu buku untuk dipinjam.';
                         window.scrollTo({ top: 0, behavior: 'smooth' });
+                        return;
+                    }
+
+                    if (this.selectedBookCount() > max) {
+                        event.preventDefault();
+                        this.formError = `Maksimal ${max} eksemplar untuk peminjaman biasa.`;
+                        window.scrollTo({ top: 0, behavior: 'smooth' });
                     }
                 },
 
                 openQuickMemberModal() {
                     this.showModal = true;
                     this.modalErrorMessage = '';
-                    this.modalSuccessMessage = '';
-
-                    if (!this.newGender) {
-                        this.newGender = 'laki-laki';
-                    }
-
-                    if (!this.newMemberType) {
-                        this.newMemberType = 'siswa';
-                    }
                 },
 
                 closeQuickMemberModal() {
@@ -843,7 +806,6 @@
 
                     this.showModal = false;
                     this.modalErrorMessage = '';
-                    this.modalSuccessMessage = '';
                 },
 
                 resetQuickForm() {
@@ -854,12 +816,10 @@
                     this.newClassId = '';
                     this.newPhone = '';
                     this.modalErrorMessage = '';
-                    this.modalSuccessMessage = '';
                 },
 
                 async submitQuickMember() {
                     this.modalErrorMessage = '';
-                    this.modalSuccessMessage = '';
 
                     if (!this.newNisNip || !this.newName || !this.newGender || !this.newMemberType) {
                         this.modalErrorMessage = 'Mohon lengkapi semua kolom wajib.';
@@ -893,17 +853,6 @@
                             }),
                         });
 
-                        const contentType = response.headers.get('content-type') || '';
-
-                        if (!contentType.includes('application/json')) {
-                            if (response.ok) {
-                                window.location.reload();
-                                return;
-                            }
-
-                            throw new Error('Server tidak mengembalikan response JSON.');
-                        }
-
                         const result = await response.json();
 
                         if (!response.ok || !result.success || !result.member) {
@@ -926,23 +875,15 @@
                             ).toLowerCase(),
                         };
 
-                        const alreadyExists = this.membersList.some(member => String(member.id) === String(newAddedMember.id));
-
-                        if (!alreadyExists) {
-                            this.membersList.push(newAddedMember);
-                        }
-
+                        this.membersList.push(newAddedMember);
                         this.selectMember(newAddedMember);
-
-                        this.modalSuccessMessage = result.message || 'Anggota berhasil didaftarkan.';
 
                         setTimeout(() => {
                             this.resetQuickForm();
                             this.showModal = false;
-                        }, 600);
-
+                        }, 400);
                     } catch (error) {
-                        this.modalErrorMessage = error.message || 'Terjadi kesalahan sistem. Silakan refresh halaman atau coba lagi.';
+                        this.modalErrorMessage = error.message || 'Terjadi kesalahan sistem.';
                     } finally {
                         this.quickSaving = false;
                     }
