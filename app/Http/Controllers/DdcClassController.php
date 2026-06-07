@@ -8,14 +8,39 @@ use Illuminate\Validation\Rule;
 
 class DdcClassController extends Controller
 {
-    public function index()
-    {
-        $ddcClasses = DdcClass::withCount('books')
-            ->orderBy('code')
-            ->get();
-
-        return view('pustakawan.ddc.index', compact('ddcClasses'));
+    public function index(Request $request)
+{
+    if (!auth()->check() || (int) auth()->user()->role_id !== 1) {
+        abort(403, 'Anda tidak memiliki akses.');
     }
+
+    $keyword = trim((string) (
+        $request->input('keyword')
+        ?? $request->input('search')
+        ?? $request->input('q')
+        ?? ''
+    ));
+
+    $ddcClasses = \App\Models\DdcClass::query()
+        ->when($keyword !== '', function ($query) use ($keyword) {
+            $query->where(function ($subQuery) use ($keyword) {
+                $subQuery->where('code', 'like', "%{$keyword}%")
+                    ->orWhere('name', 'like', "%{$keyword}%");
+
+                if (\Illuminate\Support\Facades\Schema::hasColumn('ddc_classes', 'description')) {
+                    $subQuery->orWhere('description', 'like', "%{$keyword}%");
+                }
+            });
+        })
+        ->orderBy('code')
+        ->paginate(10)
+        ->withQueryString();
+
+    return view('pustakawan.ddc.index', compact(
+        'ddcClasses',
+        'keyword'
+    ));
+}
 
     public function store(Request $request)
     {

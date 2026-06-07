@@ -12,19 +12,57 @@ use Illuminate\Database\QueryException;
 
 class BookController extends Controller
 {
-    public function index()
-    {
-        $books = \App\Models\Book::with(['category', 'ddcClass'])
-            ->withCount('bookItems')
-            ->latest()
-            ->paginate(10);
-
-        if ((int) auth()->user()->role_id === 2) {
-            return view('kepala_sekolah.books.index', compact('books'));
-        }
-
-        return view('pustakawan.books.index', compact('books'));
+    public function index(Request $request)
+{
+    if (!auth()->check() || !in_array((int) auth()->user()->role_id, [1, 2], true)) {
+        abort(403, 'Anda tidak memiliki akses.');
     }
+
+    $keyword = trim((string) (
+        $request->input('keyword')
+        ?? $request->input('search')
+        ?? $request->input('q')
+        ?? ''
+    ));
+
+    $categoryId = $request->input('category_id');
+    $ddcClassId = $request->input('ddc_class_id');
+
+    $books = \App\Models\Book::query()
+        ->when($keyword !== '', function ($query) use ($keyword) {
+            $query->where(function ($subQuery) use ($keyword) {
+                $subQuery->where('title', 'like', "%{$keyword}%")
+                    ->orWhere('author', 'like', "%{$keyword}%")
+                    ->orWhere('publisher', 'like', "%{$keyword}%")
+                    ->orWhere('isbn', 'like', "%{$keyword}%");
+
+                if (\Illuminate\Support\Facades\Schema::hasColumn('books', 'classification_code')) {
+                    $subQuery->orWhere('classification_code', 'like', "%{$keyword}%");
+                }
+            });
+        })
+        ->when($categoryId, function ($query) use ($categoryId) {
+            $query->where('category_id', $categoryId);
+        })
+        ->when($ddcClassId, function ($query) use ($ddcClassId) {
+            $query->where('ddc_class_id', $ddcClassId);
+        })
+        ->latest()
+        ->paginate(10)
+        ->withQueryString();
+
+    $categories = \App\Models\Category::orderBy('name')->get();
+    $ddcClasses = \App\Models\DdcClass::orderBy('code')->get();
+
+    return view('pustakawan.books.index', compact(
+        'books',
+        'keyword',
+        'categoryId',
+        'ddcClassId',
+        'categories',
+        'ddcClasses'
+    ));
+}
 
     public function create()
     {

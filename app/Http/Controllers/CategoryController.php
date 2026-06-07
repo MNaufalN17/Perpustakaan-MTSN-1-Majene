@@ -10,11 +10,38 @@ class CategoryController extends Controller
     /**
      * Menampilkan daftar semua kategori.
      */
-    public function index()
-    {
-        $categories = Category::latest()->get();
-        return view('pustakawan.categories.index', compact('categories'));
+    public function index(Request $request)
+{
+    if (!auth()->check() || (int) auth()->user()->role_id !== 1) {
+        abort(403, 'Anda tidak memiliki akses.');
     }
+
+    $keyword = trim((string) (
+        $request->input('keyword')
+        ?? $request->input('search')
+        ?? $request->input('q')
+        ?? ''
+    ));
+
+    $categories = \App\Models\Category::query()
+        ->when($keyword !== '', function ($query) use ($keyword) {
+            $query->where(function ($subQuery) use ($keyword) {
+                $subQuery->where('name', 'like', "%{$keyword}%");
+
+                if (\Illuminate\Support\Facades\Schema::hasColumn('categories', 'description')) {
+                    $subQuery->orWhere('description', 'like', "%{$keyword}%");
+                }
+            });
+        })
+        ->orderBy('name')
+        ->paginate(10)
+        ->withQueryString();
+
+    return view('pustakawan.categories.index', compact(
+        'categories',
+        'keyword'
+    ));
+}
 
     /**
      * Menampilkan form tambah kategori.
