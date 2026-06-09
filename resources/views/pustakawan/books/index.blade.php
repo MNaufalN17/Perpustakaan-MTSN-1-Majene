@@ -45,11 +45,27 @@
     @php
         $bookCollection = method_exists($books, 'getCollection') ? $books->getCollection() : collect($books ?? []);
         $bookCount = method_exists($books, 'total') ? $books->total() : $bookCollection->count();
+
+        $copyStatusLabels = [
+            'tersedia' => 'Tersedia',
+            'dipinjam' => 'Dipinjam',
+            'terlambat' => 'Terlambat',
+            'rusak' => 'Rusak',
+            'hilang' => 'Hilang',
+            'nonaktif' => 'Dikeluarkan dari Stok',
+        ];
+
+        $copyConditionLabels = [
+            'baik' => 'Baik',
+            'rusak ringan' => 'Rusak Ringan',
+            'rusak berat' => 'Rusak Berat',
+            'hilang' => 'Hilang',
+        ];
     @endphp
 
     <div
         x-data="bookDeleteModal()"
-        @keydown.escape.window="closeDeleteModal()"
+        @keydown.escape.window="closeAllModals()"
         class="min-h-screen bg-gradient-to-br from-slate-50 via-emerald-50/40 to-sky-50/40 py-10"
     >
         <div class="mx-auto max-w-7xl sm:px-6 lg:px-8">
@@ -152,6 +168,37 @@
                                             ];
 
                                             $deletePayloadEncoded = base64_encode(json_encode($deletePayload));
+
+                                            $copyItems = $bookItemsQuery
+                                                ? (clone $bookItemsQuery)
+                                                    ->orderBy('copy_number')
+                                                    ->orderBy('item_code')
+                                                    ->get()
+                                                : collect();
+
+                                            $copyPayload = [
+                                                'title' => $book->title ?? 'Buku',
+                                                'author' => $book->author ?? '-',
+                                                'copy_count' => $totalCopyCount,
+                                                'active_stock_count' => $activeStockCount,
+                                                'book_items_url' => route('book_items.index', ['keyword' => $book->title ?? '']),
+                                                'create_item_url' => route('book_items.create'),
+                                                'copies' => $copyItems->map(function ($copy) use ($copyStatusLabels, $copyConditionLabels) {
+                                                    return [
+                                                        'id' => (int) $copy->id,
+                                                        'item_code' => $copy->item_code ?? '-',
+                                                        'copy_number' => $copy->copy_number ?? '-',
+                                                        'status' => $copy->status ?? '-',
+                                                        'status_label' => $copyStatusLabels[$copy->status] ?? ucwords((string) $copy->status),
+                                                        'condition' => $copy->condition ?? '-',
+                                                        'condition_label' => $copyConditionLabels[$copy->condition] ?? ucwords((string) $copy->condition),
+                                                        'location' => $copy->location ?? '-',
+                                                        'edit_url' => route('book_items.edit', $copy),
+                                                    ];
+                                                })->values(),
+                                            ];
+
+                                            $copyPayloadEncoded = base64_encode(json_encode($copyPayload));
                                         @endphp
 
                                         <tr class="align-middle transition hover:bg-emerald-50/40">
@@ -258,7 +305,7 @@
                                             </td>
 
                                             <td class="px-5 py-5">
-                                                <div class="mx-auto grid w-[150px] grid-cols-2 gap-2">
+                                                <div class="mx-auto grid w-[170px] grid-cols-2 gap-2">
                                                     <a href="{{ route('books.show', $book) }}"
                                                        class="inline-flex h-9 items-center justify-center gap-1 rounded-xl border border-emerald-200 bg-white px-2 text-xs font-extrabold text-emerald-700 transition hover:bg-emerald-50">
                                                         <span class="material-symbols-outlined text-[15px]">visibility</span>
@@ -271,6 +318,16 @@
                                                             <span class="material-symbols-outlined text-[15px]">edit</span>
                                                             Edit
                                                         </a>
+
+                                                        <button
+                                                            type="button"
+                                                            data-copy-payload="{{ $copyPayloadEncoded }}"
+                                                            @click="openCopyModalFromButton($event.currentTarget)"
+                                                            class="col-span-2 inline-flex h-9 w-full items-center justify-center gap-1 rounded-xl border border-sky-200 bg-sky-50 px-2 text-xs font-extrabold text-sky-700 transition hover:bg-sky-100"
+                                                        >
+                                                            <span class="material-symbols-outlined text-[15px]">inventory_2</span>
+                                                            Kelola Copy
+                                                        </button>
 
                                                         <button
                                                             type="button"
@@ -320,6 +377,172 @@
                             {{ $books->links() }}
                         </div>
                     @endif
+                </div>
+            </div>
+        </div>
+
+        <div
+            x-show="copyModalOpen"
+            x-cloak
+            x-transition.opacity
+            class="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/70 px-4 py-8 backdrop-blur-md"
+        >
+            <div
+                @click.outside="closeCopyModal()"
+                x-show="copyModalOpen"
+                x-transition:enter="transition ease-out duration-200"
+                x-transition:enter-start="opacity-0 scale-95 translate-y-4"
+                x-transition:enter-end="opacity-100 scale-100 translate-y-0"
+                class="flex max-h-[90vh] w-full max-w-4xl flex-col overflow-hidden rounded-[2rem] bg-white shadow-[0_30px_90px_rgba(15,23,42,0.35)]"
+            >
+                <div class="shrink-0 bg-gradient-to-r from-sky-700 to-emerald-600 px-6 py-5 text-white">
+                    <div class="flex items-start justify-between gap-4">
+                        <div>
+                            <p class="text-xs font-extrabold uppercase tracking-[0.2em] text-sky-50">
+                                Kelola Copy
+                            </p>
+
+                            <h3 class="mt-1 text-xl font-black leading-tight" x-text="copyBook.title"></h3>
+
+                            <p class="mt-1 text-sm text-sky-50" x-text="copyBook.author"></p>
+                        </div>
+
+                        <button
+                            type="button"
+                            @click="closeCopyModal()"
+                            class="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-white/15 transition hover:bg-white/25"
+                        >
+                            <span class="material-symbols-outlined">close</span>
+                        </button>
+                    </div>
+                </div>
+
+                <div class="min-h-0 flex-1 overflow-y-auto p-6">
+                    <div class="grid gap-4 md:grid-cols-3">
+                        <div class="rounded-3xl border border-sky-100 bg-sky-50 px-5 py-4">
+                            <p class="text-xs font-bold uppercase tracking-wider text-sky-700">
+                                Total Copy
+                            </p>
+
+                            <p class="mt-2 text-3xl font-black text-sky-900" x-text="copyBook.copy_count"></p>
+                        </div>
+
+                        <div class="rounded-3xl border border-emerald-100 bg-emerald-50 px-5 py-4">
+                            <p class="text-xs font-bold uppercase tracking-wider text-emerald-700">
+                                Stok Aktif
+                            </p>
+
+                            <p class="mt-2 text-3xl font-black text-emerald-900" x-text="copyBook.active_stock_count"></p>
+                        </div>
+
+                        <div class="rounded-3xl border border-amber-100 bg-amber-50 px-5 py-4">
+                            <p class="text-xs font-bold uppercase tracking-wider text-amber-700">
+                                Aksi Lanjutan
+                            </p>
+
+                            <div class="mt-3 flex flex-wrap gap-2">
+                                <a
+                                    :href="copyBook.book_items_url"
+                                    class="inline-flex items-center justify-center gap-1.5 rounded-2xl bg-amber-500 px-4 py-2 text-xs font-extrabold text-white transition hover:bg-amber-600"
+                                >
+                                    <span class="material-symbols-outlined text-[16px]">open_in_new</span>
+                                    Buka Stok
+                                </a>
+
+                                <a
+                                    :href="copyBook.create_item_url"
+                                    class="inline-flex items-center justify-center gap-1.5 rounded-2xl border border-emerald-200 bg-white px-4 py-2 text-xs font-extrabold text-emerald-700 transition hover:bg-emerald-50"
+                                >
+                                    <span class="material-symbols-outlined text-[16px]">add_circle</span>
+                                    Tambah
+                                </a>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="mt-6 overflow-hidden rounded-3xl border border-gray-100 bg-white">
+                        <div class="border-b border-gray-100 bg-slate-50 px-5 py-4">
+                            <h4 class="text-sm font-extrabold text-gray-900">
+                                Daftar Eksemplar Buku
+                            </h4>
+                        </div>
+
+                        <div class="max-h-[46vh] overflow-y-auto">
+                            <template x-if="copyBook.copies.length > 0">
+                                <div class="divide-y divide-gray-100">
+                                    <template x-for="copy in copyBook.copies" :key="copy.id">
+                                        <div class="grid gap-4 px-5 py-4 md:grid-cols-[1.2fr_0.8fr_0.8fr_auto] md:items-center">
+                                            <div class="min-w-0">
+                                                <p class="font-mono text-sm font-black text-gray-900" x-text="copy.item_code"></p>
+
+                                                <p class="mt-1 text-xs font-semibold text-gray-500">
+                                                    Copy <span x-text="copy.copy_number"></span>
+                                                    <span> - </span>
+                                                    <span x-text="copy.location || '-'"></span>
+                                                </p>
+                                            </div>
+
+                                            <div>
+                                                <p class="text-xs font-bold uppercase tracking-wider text-gray-400">
+                                                    Status
+                                                </p>
+
+                                                <span
+                                                    class="mt-1 inline-flex rounded-full border px-3 py-1 text-xs font-extrabold"
+                                                    :class="copyStatusClass(copy.status)"
+                                                    x-text="copy.status_label"
+                                                ></span>
+                                            </div>
+
+                                            <div>
+                                                <p class="text-xs font-bold uppercase tracking-wider text-gray-400">
+                                                    Kondisi
+                                                </p>
+
+                                                <span
+                                                    class="mt-1 inline-flex rounded-full border px-3 py-1 text-xs font-extrabold"
+                                                    :class="copyConditionClass(copy.condition)"
+                                                    x-text="copy.condition_label"
+                                                ></span>
+                                            </div>
+
+                                            <a
+                                                :href="copy.edit_url"
+                                                class="inline-flex h-10 items-center justify-center gap-1.5 rounded-2xl border border-teal-200 bg-white px-4 text-xs font-extrabold text-teal-700 transition hover:bg-teal-50"
+                                            >
+                                                <span class="material-symbols-outlined text-[15px]">edit</span>
+                                                Edit
+                                            </a>
+                                        </div>
+                                    </template>
+                                </div>
+                            </template>
+
+                            <template x-if="copyBook.copies.length === 0">
+                                <div class="px-6 py-12 text-center">
+                                    <div class="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-slate-50 text-slate-500">
+                                        <span class="material-symbols-outlined">inventory_2</span>
+                                    </div>
+
+                                    <p class="mt-4 text-sm font-bold text-gray-700">
+                                        Buku ini belum punya copy.
+                                    </p>
+                                </div>
+                            </template>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="shrink-0 border-t border-gray-100 bg-white px-6 py-5">
+                    <div class="flex justify-end">
+                        <button
+                            type="button"
+                            @click="closeCopyModal()"
+                            class="inline-flex items-center justify-center rounded-2xl border border-gray-200 bg-white px-5 py-3 text-sm font-bold text-gray-600 transition hover:bg-gray-50"
+                        >
+                            Tutup
+                        </button>
+                    </div>
                 </div>
             </div>
         </div>
@@ -457,13 +680,110 @@
         <script>
             function bookDeleteModal() {
                 return {
+                    copyModalOpen: false,
                     deleteModalOpen: false,
+                    copyBook: {
+                        title: '',
+                        author: '',
+                        copy_count: 0,
+                        active_stock_count: 0,
+                        book_items_url: '',
+                        create_item_url: '',
+                        copies: [],
+                    },
                     deleteBook: {
                         action: '',
                         title: '',
                         copy_count: 0,
                         can_delete: false,
                         book_items_url: '',
+                    },
+
+                    openCopyModalFromButton(button) {
+                        try {
+                            const encodedPayload = button.dataset.copyPayload || '';
+                            const payload = JSON.parse(atob(encodedPayload));
+                            this.openCopyModal(payload);
+                        } catch (error) {
+                            console.error(error);
+
+                            this.copyBook = {
+                                title: 'Data copy gagal dibaca',
+                                author: '',
+                                copy_count: 0,
+                                active_stock_count: 0,
+                                book_items_url: '{{ route('book_items.index') }}',
+                                create_item_url: '{{ route('book_items.create') }}',
+                                copies: [],
+                            };
+
+                            this.copyModalOpen = true;
+                        }
+                    },
+
+                    openCopyModal(payload) {
+                        this.copyBook = {
+                            title: payload.title || 'Buku',
+                            author: payload.author || '-',
+                            copy_count: Number(payload.copy_count || 0),
+                            active_stock_count: Number(payload.active_stock_count || 0),
+                            book_items_url: payload.book_items_url || '{{ route('book_items.index') }}',
+                            create_item_url: payload.create_item_url || '{{ route('book_items.create') }}',
+                            copies: Array.isArray(payload.copies) ? payload.copies : [],
+                        };
+
+                        this.copyModalOpen = true;
+                    },
+
+                    closeCopyModal() {
+                        this.copyModalOpen = false;
+
+                        this.copyBook = {
+                            title: '',
+                            author: '',
+                            copy_count: 0,
+                            active_stock_count: 0,
+                            book_items_url: '',
+                            create_item_url: '',
+                            copies: [],
+                        };
+                    },
+
+                    closeAllModals() {
+                        this.closeCopyModal();
+                        this.closeDeleteModal();
+                    },
+
+                    copyStatusClass(status) {
+                        if (status === 'tersedia') {
+                            return 'border-emerald-200 bg-emerald-50 text-emerald-700';
+                        }
+
+                        if (status === 'dipinjam' || status === 'terlambat') {
+                            return 'border-amber-200 bg-amber-50 text-amber-700';
+                        }
+
+                        if (status === 'rusak' || status === 'hilang') {
+                            return 'border-red-200 bg-red-50 text-red-700';
+                        }
+
+                        return 'border-gray-200 bg-gray-50 text-gray-600';
+                    },
+
+                    copyConditionClass(condition) {
+                        if (condition === 'baik') {
+                            return 'border-emerald-200 bg-emerald-50 text-emerald-700';
+                        }
+
+                        if (condition === 'rusak ringan') {
+                            return 'border-amber-200 bg-amber-50 text-amber-700';
+                        }
+
+                        if (condition === 'rusak berat' || condition === 'hilang') {
+                            return 'border-red-200 bg-red-50 text-red-700';
+                        }
+
+                        return 'border-gray-200 bg-gray-50 text-gray-600';
                     },
 
                     openDeleteModalFromButton(button) {

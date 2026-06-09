@@ -1103,7 +1103,7 @@
                         }
 
                         if (this.approval.tone === 'amber') {
-                            return 'bg-amber-500 shadow-amber-500/25 hover:bg-amber-600';
+                            return 'bg-ambser-500 shadow-amber-500/25 hover:bg-amber-600';
                         }
 
                         if (this.approval.tone === 'sky') {

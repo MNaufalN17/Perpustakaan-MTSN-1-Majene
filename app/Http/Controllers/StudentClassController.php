@@ -6,6 +6,7 @@ use App\Models\StudentClass;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
+use Illuminate\Validation\ValidationException;
 
 class StudentClassController extends Controller
 {
@@ -15,7 +16,12 @@ class StudentClassController extends Controller
             abort(403, 'Anda tidak memiliki akses.');
         }
 
-        $keyword = trim((string) $request->input('keyword', ''));
+        $keyword = trim((string) (
+            $request->input('keyword')
+            ?? $request->input('search')
+            ?? $request->input('q')
+            ?? ''
+        ));
 
         $classes = StudentClass::query()
             ->when($keyword !== '', function ($query) use ($keyword) {
@@ -32,13 +38,31 @@ class StudentClassController extends Controller
                         $subQuery->orWhere('academic_year', 'like', "%{$keyword}%");
                     }
 
+                    if (Schema::hasColumn('classes', 'school_year')) {
+                        $subQuery->orWhere('school_year', 'like', "%{$keyword}%");
+                    }
+
                     if (Schema::hasColumn('classes', 'homeroom_teacher')) {
                         $subQuery->orWhere('homeroom_teacher', 'like', "%{$keyword}%");
                     }
+
+                    if (Schema::hasColumn('classes', 'teacher_name')) {
+                        $subQuery->orWhere('teacher_name', 'like', "%{$keyword}%");
+                    }
                 });
-            })
-            ->orderBy('level')
-            ->orderBy('class_name')
+            });
+
+        if (Schema::hasColumn('classes', 'level')) {
+            $classes->orderBy('level');
+        }
+
+        if (Schema::hasColumn('classes', 'class_name')) {
+            $classes->orderBy('class_name');
+        } elseif (Schema::hasColumn('classes', 'name')) {
+            $classes->orderBy('name');
+        }
+
+        $classes = $classes
             ->paginate(10)
             ->withQueryString();
 
@@ -60,7 +84,16 @@ class StudentClassController extends Controller
             abort(403, 'Anda tidak memiliki akses.');
         }
 
-        $payload = $this->normalizePayload($request);
+        if ($this->isBulkRequest($request)) {
+            return $this->storeBulk($request);
+        }
+
+        return $this->storeSingle($request);
+    }
+
+    private function storeSingle(Request $request)
+    {
+        $payload = $this->normalizePayload($request->all());
 
         $request->merge($payload);
 
@@ -89,19 +122,7 @@ class StudentClassController extends Controller
 
         $class = new StudentClass();
 
-        foreach ($this->filterColumns('classes', [
-            'level' => $validated['level'],
-            'class_name' => $validated['class_name'],
-            'name' => $validated['class_name'],
-            'academic_year' => $validated['academic_year'],
-            'school_year' => $validated['academic_year'],
-            'homeroom_teacher' => $validated['homeroom_teacher'] ?? null,
-            'teacher_name' => $validated['homeroom_teacher'] ?? null,
-            'status' => $validated['status'],
-            'is_active' => $validated['status'] === 'aktif' ? 1 : 0,
-        ]) as $column => $value) {
-            $class->{$column} = $value;
-        }
+        $this->fillClassData($class, $validated);
 
         $class->save();
 
@@ -110,6 +131,87 @@ class StudentClassController extends Controller
             ->with('success_title', 'Kelas berhasil ditambahkan')
             ->with('success_message', 'Kelas "' . $validated['class_name'] . '" berhasil ditambahkan.')
             ->with('success_detail', 'Data kelas sudah tersimpan dan dapat digunakan pada data anggota.');
+    }
+
+    private function storeBulk(Request $request)
+    {
+        $rows = $this->extractBulkRows($request);
+
+        $normalizedRows = [];
+        $errors = [];
+
+        foreach ($rows as $index => $row) {
+            $normalized = $this->normalizePayload($row);
+
+            if ($this->isEmptyRow($normalized)) {
+                continue;
+            }
+
+            if ($normalized['class_name'] === '') {
+                $errors["classes.{$index}.class_name"] = 'Nama kelas wajib diisi.';
+            }
+
+            if ($normalized['academic_year'] === '') {
+                $errors["classes.{$index}.academic_year"] = 'Tahun ajaran wajib diisi.';
+            }
+
+            if ($normalized['level'] < 1 || $normalized['level'] > 12) {
+                $errors["classes.{$index}.level"] = 'Tingkat kelas tidak valid.';
+            }
+
+            if (!in_array($normalized['status'], ['aktif', 'nonaktif'], true)) {
+                $errors["classes.{$index}.status"] = 'Status kelas tidak valid.';
+            }
+
+            $normalizedRows[] = [
+                'index' => $index,
+                'data' => $normalized,
+            ];
+        }
+
+        if (empty($normalizedRows)) {
+            throw ValidationException::withMessages([
+                'classes' => 'Minimal isi satu data kelas.',
+            ]);
+        }
+
+        $seen = [];
+
+        foreach ($normalizedRows as $row) {
+            $data = $row['data'];
+            $key = strtolower($data['class_name'] . '|' . $data['academic_year']);
+
+            if (isset($seen[$key])) {
+                $errors["classes.{$row['index']}.class_name"] = 'Data kelas ini duplikat pada form.';
+                continue;
+            }
+
+            $seen[$key] = true;
+
+            if ($this->classExists($data['class_name'], $data['academic_year'])) {
+                $errors["classes.{$row['index']}.class_name"] = 'Kelas "' . $data['class_name'] . '" pada tahun ajaran ' . $data['academic_year'] . ' sudah ada.';
+            }
+        }
+
+        if (!empty($errors)) {
+            throw ValidationException::withMessages($errors);
+        }
+
+        DB::transaction(function () use ($normalizedRows) {
+            foreach ($normalizedRows as $row) {
+                $class = new StudentClass();
+
+                $this->fillClassData($class, $row['data']);
+
+                $class->save();
+            }
+        });
+
+        return redirect()
+            ->route('classes.index')
+            ->with('success_title', 'Kelas berhasil ditambahkan')
+            ->with('success_message', count($normalizedRows) . ' data kelas berhasil disimpan.')
+            ->with('success_detail', 'Data kelas baru sudah tersedia untuk data anggota dan peminjaman.');
     }
 
     public function show(StudentClass $class)
@@ -136,7 +238,7 @@ class StudentClassController extends Controller
             abort(403, 'Anda tidak memiliki akses.');
         }
 
-        $payload = $this->normalizePayload($request);
+        $payload = $this->normalizePayload($request->all());
 
         $request->merge($payload);
 
@@ -163,19 +265,7 @@ class StudentClassController extends Controller
                 ]);
         }
 
-        foreach ($this->filterColumns('classes', [
-            'level' => $validated['level'],
-            'class_name' => $validated['class_name'],
-            'name' => $validated['class_name'],
-            'academic_year' => $validated['academic_year'],
-            'school_year' => $validated['academic_year'],
-            'homeroom_teacher' => $validated['homeroom_teacher'] ?? null,
-            'teacher_name' => $validated['homeroom_teacher'] ?? null,
-            'status' => $validated['status'],
-            'is_active' => $validated['status'] === 'aktif' ? 1 : 0,
-        ]) as $column => $value) {
-            $class->{$column} = $value;
-        }
+        $this->fillClassData($class, $validated);
 
         $class->save();
 
@@ -227,18 +317,119 @@ class StudentClassController extends Controller
             ->with('success_detail', 'Data kelas sudah tidak tampil pada daftar kelas.');
     }
 
-    private function normalizePayload(Request $request): array
+    private function isBulkRequest(Request $request): bool
     {
-        $rawLevel = $request->input('level')
-            ?? $request->input('grade')
-            ?? $request->input('grade_level')
+        if (is_array($request->input('classes'))) {
+            return true;
+        }
+
+        if (is_array($request->input('rows'))) {
+            return true;
+        }
+
+        if (is_array($request->input('items'))) {
+            return true;
+        }
+
+        if (is_array($request->input('class_name'))) {
+            return true;
+        }
+
+        if (is_array($request->input('name'))) {
+            return true;
+        }
+
+        if (is_array($request->input('academic_year'))) {
+            return true;
+        }
+
+        if (is_array($request->input('school_year'))) {
+            return true;
+        }
+
+        return false;
+    }
+
+    private function extractBulkRows(Request $request): array
+    {
+        if (is_array($request->input('classes'))) {
+            return array_values($request->input('classes'));
+        }
+
+        if (is_array($request->input('rows'))) {
+            return array_values($request->input('rows'));
+        }
+
+        if (is_array($request->input('items'))) {
+            return array_values($request->input('items'));
+        }
+
+        $classNames = $this->arrayInput($request, 'class_name');
+        $names = $this->arrayInput($request, 'name');
+        $levels = $this->arrayInput($request, 'level');
+        $grades = $this->arrayInput($request, 'grade');
+        $gradeLevels = $this->arrayInput($request, 'grade_level');
+        $academicYears = $this->arrayInput($request, 'academic_year');
+        $schoolYears = $this->arrayInput($request, 'school_year');
+        $homeroomTeachers = $this->arrayInput($request, 'homeroom_teacher');
+        $teacherNames = $this->arrayInput($request, 'teacher_name');
+        $statuses = $this->arrayInput($request, 'status');
+        $isActives = $this->arrayInput($request, 'is_active');
+
+        $max = max([
+            count($classNames),
+            count($names),
+            count($levels),
+            count($grades),
+            count($gradeLevels),
+            count($academicYears),
+            count($schoolYears),
+            count($homeroomTeachers),
+            count($teacherNames),
+            count($statuses),
+            count($isActives),
+        ]);
+
+        $rows = [];
+
+        for ($i = 0; $i < $max; $i++) {
+            $rows[] = [
+                'class_name' => $classNames[$i] ?? null,
+                'name' => $names[$i] ?? null,
+                'level' => $levels[$i] ?? null,
+                'grade' => $grades[$i] ?? null,
+                'grade_level' => $gradeLevels[$i] ?? null,
+                'academic_year' => $academicYears[$i] ?? null,
+                'school_year' => $schoolYears[$i] ?? null,
+                'homeroom_teacher' => $homeroomTeachers[$i] ?? null,
+                'teacher_name' => $teacherNames[$i] ?? null,
+                'status' => $statuses[$i] ?? null,
+                'is_active' => $isActives[$i] ?? null,
+            ];
+        }
+
+        return $rows;
+    }
+
+    private function arrayInput(Request $request, string $key): array
+    {
+        $value = $request->input($key, []);
+
+        return is_array($value) ? array_values($value) : [];
+    }
+
+    private function normalizePayload(array $payload): array
+    {
+        $rawLevel = $payload['level']
+            ?? $payload['grade']
+            ?? $payload['grade_level']
             ?? 7;
 
         $level = $this->normalizeLevel($rawLevel);
 
         $className = trim((string) (
-            $request->input('class_name')
-            ?? $request->input('name')
+            $payload['class_name']
+            ?? $payload['name']
             ?? ''
         ));
 
@@ -247,21 +438,21 @@ class StudentClassController extends Controller
         }
 
         $academicYear = trim((string) (
-            $request->input('academic_year')
-            ?? $request->input('school_year')
+            $payload['academic_year']
+            ?? $payload['school_year']
             ?? ''
         ));
 
         $homeroomTeacher = trim((string) (
-            $request->input('homeroom_teacher')
-            ?? $request->input('teacher_name')
+            $payload['homeroom_teacher']
+            ?? $payload['teacher_name']
             ?? ''
         ));
 
-        $status = $request->input('status');
+        $status = $payload['status'] ?? null;
 
-        if ($status === null && $request->has('is_active')) {
-            $status = (bool) $request->input('is_active') ? 'aktif' : 'nonaktif';
+        if ($status === null && array_key_exists('is_active', $payload)) {
+            $status = (bool) $payload['is_active'] ? 'aktif' : 'nonaktif';
         }
 
         $status = strtolower(trim((string) ($status ?: 'aktif')));
@@ -279,17 +470,24 @@ class StudentClassController extends Controller
         ];
     }
 
+    private function isEmptyRow(array $row): bool
+    {
+        return trim((string) $row['class_name']) === ''
+            && trim((string) $row['academic_year']) === ''
+            && trim((string) ($row['homeroom_teacher'] ?? '')) === '';
+    }
+
     private function normalizeLevel(mixed $level): int
     {
         $level = strtoupper(trim((string) $level));
 
         return match ($level) {
-            'VII', '7' => 7,
-            'VIII', '8' => 8,
-            'IX', '9' => 9,
-            'X', '10' => 10,
-            'XI', '11' => 11,
-            'XII', '12' => 12,
+            'VII', '7', 'KELAS 7', 'KELAS VII' => 7,
+            'VIII', '8', 'KELAS 8', 'KELAS VIII' => 8,
+            'IX', '9', 'KELAS 9', 'KELAS IX' => 9,
+            'X', '10', 'KELAS 10', 'KELAS X' => 10,
+            'XI', '11', 'KELAS 11', 'KELAS XI' => 11,
+            'XII', '12', 'KELAS 12', 'KELAS XII' => 12,
             default => is_numeric($level) ? (int) $level : 7,
         };
     }
@@ -309,15 +507,42 @@ class StudentClassController extends Controller
 
     private function classExists(string $className, string $academicYear, ?int $ignoreId = null): bool
     {
-        $query = StudentClass::query()
-            ->where('class_name', $className)
-            ->where('academic_year', $academicYear);
+        $query = StudentClass::query();
+
+        if (Schema::hasColumn('classes', 'class_name')) {
+            $query->where('class_name', $className);
+        } elseif (Schema::hasColumn('classes', 'name')) {
+            $query->where('name', $className);
+        }
+
+        if (Schema::hasColumn('classes', 'academic_year')) {
+            $query->where('academic_year', $academicYear);
+        } elseif (Schema::hasColumn('classes', 'school_year')) {
+            $query->where('school_year', $academicYear);
+        }
 
         if ($ignoreId) {
             $query->where('id', '!=', $ignoreId);
         }
 
         return $query->exists();
+    }
+
+    private function fillClassData(StudentClass $class, array $data): void
+    {
+        foreach ($this->filterColumns('classes', [
+            'level' => $data['level'],
+            'class_name' => $data['class_name'],
+            'name' => $data['class_name'],
+            'academic_year' => $data['academic_year'],
+            'school_year' => $data['academic_year'],
+            'homeroom_teacher' => $data['homeroom_teacher'] ?? null,
+            'teacher_name' => $data['homeroom_teacher'] ?? null,
+            'status' => $data['status'],
+            'is_active' => $data['status'] === 'aktif' ? 1 : 0,
+        ]) as $column => $value) {
+            $class->{$column} = $value;
+        }
     }
 
     private function filterColumns(string $table, array $payload): array

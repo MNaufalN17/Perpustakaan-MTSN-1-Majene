@@ -136,8 +136,15 @@
             initialRowCount: {{ $initialRowCount }},
             oldRows: @js($oldSelectedRows),
             books: @js($booksPayload),
+            studentClasses: @js(collect($classes ?? $studentClasses ?? [])->map(fn ($class) => [
+                'id' => (int) $class->id,
+                'name' => (string) ($class->class_name ?? $class->name ?? ('Kelas #' . $class->id)),
+            ])->values()),
+            quickMemberStoreUrl: @js(route('members.quick_store')),
+            csrfToken: @js(csrf_token()),
         })"
         x-init="init()"
+        @keydown.escape.window="closeQuickMemberModal()"
         class="min-h-screen bg-gradient-to-br from-slate-50 via-emerald-50/40 to-sky-50/40 py-10"
     >
         <div class="mx-auto max-w-7xl space-y-6 sm:px-6 lg:px-8">
@@ -191,13 +198,25 @@
 
                     <div class="grid gap-6 p-6 lg:grid-cols-3">
                         <div class="lg:col-span-1">
-                            <label for="member_id" class="block text-sm font-bold text-gray-700">
-                                Anggota Peminjam
-                            </label>
+                            <div class="flex items-center justify-between gap-3">
+                                <label for="member_id" class="block text-sm font-bold text-gray-700">
+                                    Anggota Peminjam
+                                </label>
+
+                                <button
+                                    type="button"
+                                    @click="openQuickMemberModal()"
+                                    class="inline-flex items-center justify-center gap-1.5 rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-xs font-extrabold text-emerald-700 transition hover:bg-emerald-100"
+                                >
+                                    <span class="material-symbols-outlined text-[15px]">person_add</span>
+                                    Anggota Kilat
+                                </button>
+                            </div>
 
                             <select
                                 id="member_id"
                                 name="member_id"
+                                x-ref="memberSelect"
                                 class="mt-2 block w-full rounded-2xl border border-gray-200 bg-slate-50 px-4 py-3 text-sm focus:border-emerald-500 focus:ring-2 focus:ring-emerald-100"
                                 required
                             >
@@ -480,6 +499,206 @@
                     </button>
                 </div>
             </form>
+
+            <div
+                x-show="quickMemberModalOpen"
+                x-cloak
+                x-transition.opacity
+                class="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/70 px-4 py-8 backdrop-blur-sm"
+            >
+                <div
+                    @click.outside="closeQuickMemberModal()"
+                    x-show="quickMemberModalOpen"
+                    x-transition:enter="transition ease-out duration-200"
+                    x-transition:enter-start="opacity-0 scale-95 translate-y-4"
+                    x-transition:enter-end="opacity-100 scale-100 translate-y-0"
+                    class="flex max-h-[90vh] w-full max-w-3xl flex-col overflow-hidden rounded-[2rem] bg-white shadow-2xl"
+                >
+                    <div class="shrink-0 bg-gradient-to-r from-emerald-700 to-teal-500 px-6 py-5 text-white">
+                        <div class="flex items-start justify-between gap-4">
+                            <div>
+                                <p class="text-xs font-bold uppercase tracking-[0.18em] text-emerald-50">
+                                    Registrasi Kilat
+                                </p>
+
+                                <h3 class="mt-1 text-lg font-extrabold">
+                                    Tambah Anggota Peminjam
+                                </h3>
+                            </div>
+
+                            <button
+                                type="button"
+                                @click="closeQuickMemberModal()"
+                                class="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-white/15 transition hover:bg-white/25"
+                            >
+                                <span class="material-symbols-outlined">close</span>
+                            </button>
+                        </div>
+                    </div>
+
+                    <form @submit.prevent="submitQuickMember()" class="flex min-h-0 flex-1 flex-col">
+                        <div class="min-h-0 flex-1 space-y-5 overflow-y-auto p-6">
+                            <div
+                                x-show="quickMemberError"
+                                x-cloak
+                                class="rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm font-semibold text-red-700"
+                                x-text="quickMemberError"
+                            ></div>
+
+                            <div
+                                x-show="quickMemberSuccess"
+                                x-cloak
+                                class="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-semibold text-emerald-700"
+                                x-text="quickMemberSuccess"
+                            ></div>
+
+                            <div class="grid gap-5 md:grid-cols-2">
+                                <div>
+                                    <label class="block text-sm font-bold text-gray-700">
+                                        NIS / NIP
+                                    </label>
+
+                                    <input
+                                        type="text"
+                                        x-model.trim="quickMemberForm.nis_nip"
+                                        class="mt-2 block w-full rounded-2xl border border-gray-200 bg-slate-50 px-4 py-3 text-sm focus:border-emerald-500 focus:ring-2 focus:ring-emerald-100"
+                                        autocomplete="off"
+                                        required
+                                    >
+
+                                    <p x-show="fieldError('nis_nip')" x-cloak class="mt-2 text-xs font-bold text-red-600" x-text="fieldError('nis_nip')"></p>
+                                </div>
+
+                                <div>
+                                    <label class="block text-sm font-bold text-gray-700">
+                                        Nama Lengkap
+                                    </label>
+
+                                    <input
+                                        type="text"
+                                        x-model.trim="quickMemberForm.name"
+                                        class="mt-2 block w-full rounded-2xl border border-gray-200 bg-slate-50 px-4 py-3 text-sm focus:border-emerald-500 focus:ring-2 focus:ring-emerald-100"
+                                        autocomplete="off"
+                                        required
+                                    >
+
+                                    <p x-show="fieldError('name')" x-cloak class="mt-2 text-xs font-bold text-red-600" x-text="fieldError('name')"></p>
+                                </div>
+
+                                <div>
+                                    <label class="block text-sm font-bold text-gray-700">
+                                        Jenis Anggota
+                                    </label>
+
+                                    <select
+                                        x-model="quickMemberForm.member_type"
+                                        @change="quickMemberForm.student_class_id = quickMemberForm.member_type === 'siswa' ? quickMemberForm.student_class_id : ''"
+                                        class="mt-2 block w-full rounded-2xl border border-gray-200 bg-slate-50 px-4 py-3 text-sm focus:border-emerald-500 focus:ring-2 focus:ring-emerald-100"
+                                        required
+                                    >
+                                        <option value="siswa">Siswa</option>
+                                        <option value="guru">Guru</option>
+                                    </select>
+
+                                    <p x-show="fieldError('member_type')" x-cloak class="mt-2 text-xs font-bold text-red-600" x-text="fieldError('member_type')"></p>
+                                </div>
+
+                                <div>
+                                    <label class="block text-sm font-bold text-gray-700">
+                                        Jenis Kelamin
+                                    </label>
+
+                                    <select
+                                        x-model="quickMemberForm.gender"
+                                        class="mt-2 block w-full rounded-2xl border border-gray-200 bg-slate-50 px-4 py-3 text-sm focus:border-emerald-500 focus:ring-2 focus:ring-emerald-100"
+                                        required
+                                    >
+                                        <option value="">Pilih jenis kelamin</option>
+                                        <option value="laki-laki">Laki-laki</option>
+                                        <option value="perempuan">Perempuan</option>
+                                    </select>
+
+                                    <p x-show="fieldError('gender')" x-cloak class="mt-2 text-xs font-bold text-red-600" x-text="fieldError('gender')"></p>
+                                </div>
+
+                                <div x-show="quickMemberForm.member_type === 'siswa'" x-cloak>
+                                    <label class="block text-sm font-bold text-gray-700">
+                                        Kelas Siswa
+                                    </label>
+
+                                    <select
+                                        x-model="quickMemberForm.student_class_id"
+                                        class="mt-2 block w-full rounded-2xl border border-gray-200 bg-slate-50 px-4 py-3 text-sm focus:border-emerald-500 focus:ring-2 focus:ring-emerald-100"
+                                        :required="quickMemberForm.member_type === 'siswa'"
+                                    >
+                                        <option value="">Pilih kelas</option>
+
+                                        <template x-for="studentClass in studentClasses" :key="studentClass.id">
+                                            <option :value="studentClass.id" x-text="studentClass.name"></option>
+                                        </template>
+                                    </select>
+
+                                    <p x-show="fieldError('student_class_id')" x-cloak class="mt-2 text-xs font-bold text-red-600" x-text="fieldError('student_class_id')"></p>
+                                </div>
+
+                                <div>
+                                    <label class="block text-sm font-bold text-gray-700">
+                                        Nomor HP / WhatsApp
+                                    </label>
+
+                                    <input
+                                        type="text"
+                                        x-model.trim="quickMemberForm.phone"
+                                        class="mt-2 block w-full rounded-2xl border border-gray-200 bg-slate-50 px-4 py-3 text-sm focus:border-emerald-500 focus:ring-2 focus:ring-emerald-100"
+                                        autocomplete="off"
+                                    >
+
+                                    <p x-show="fieldError('phone')" x-cloak class="mt-2 text-xs font-bold text-red-600" x-text="fieldError('phone')"></p>
+                                </div>
+                            </div>
+
+                            <div class="rounded-3xl border border-emerald-100 bg-emerald-50 px-5 py-4">
+                                <div class="flex items-start gap-3">
+                                    <div class="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-white text-emerald-700">
+                                        <span class="material-symbols-outlined text-[20px]">verified_user</span>
+                                    </div>
+
+                                    <div>
+                                        <p class="text-sm font-extrabold text-emerald-900">
+                                            Status anggota otomatis aktif.
+                                        </p>
+
+                                        <p class="mt-1 text-xs leading-5 text-emerald-700">
+                                            Setelah tersimpan, anggota langsung dipilih pada transaksi ini.
+                                        </p>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="shrink-0 border-t border-gray-100 bg-white px-6 py-5">
+                            <div class="flex flex-col-reverse gap-3 sm:flex-row sm:justify-end">
+                                <button
+                                    type="button"
+                                    @click="closeQuickMemberModal()"
+                                    class="inline-flex items-center justify-center rounded-2xl border border-gray-200 bg-white px-5 py-3 text-sm font-bold text-gray-600 transition hover:bg-gray-50"
+                                >
+                                    Batal
+                                </button>
+
+                                <button
+                                    type="submit"
+                                    :disabled="quickMemberSaving"
+                                    class="inline-flex items-center justify-center gap-2 rounded-2xl bg-emerald-700 px-6 py-3 text-sm font-bold text-white shadow-lg shadow-emerald-700/20 transition hover:bg-emerald-800 disabled:cursor-not-allowed disabled:bg-gray-400"
+                                >
+                                    <span class="material-symbols-outlined text-[18px]" x-text="quickMemberSaving ? 'progress_activity' : 'save'"></span>
+                                    <span x-text="quickMemberSaving ? 'Menyimpan...' : 'Simpan Anggota'"></span>
+                                </button>
+                            </div>
+                        </div>
+                    </form>
+                </div>
+            </div>
         </div>
 
         <script>
@@ -488,7 +707,23 @@
                     maxRows: Number(config.maxRows || 3),
                     selectedRowCount: Number(config.initialRowCount || 1),
                     books: Array.isArray(config.books) ? config.books : [],
+                    studentClasses: Array.isArray(config.studentClasses) ? config.studentClasses : [],
+                    quickMemberStoreUrl: config.quickMemberStoreUrl || '',
+                    csrfToken: config.csrfToken || '',
                     rows: [],
+                    quickMemberModalOpen: false,
+                    quickMemberSaving: false,
+                    quickMemberError: '',
+                    quickMemberSuccess: '',
+                    quickMemberErrors: {},
+                    quickMemberForm: {
+                        nis_nip: '',
+                        name: '',
+                        member_type: 'siswa',
+                        gender: '',
+                        student_class_id: '',
+                        phone: '',
+                    },
 
                     init() {
                         const oldRows = Array.isArray(config.oldRows) ? config.oldRows : [];
@@ -514,6 +749,121 @@
                         }
 
                         this.selectedRowCount = this.rows.length;
+                    },
+
+                    resetQuickMemberForm() {
+                        this.quickMemberForm = {
+                            nis_nip: '',
+                            name: '',
+                            member_type: 'siswa',
+                            gender: '',
+                            student_class_id: '',
+                            phone: '',
+                        };
+                        this.quickMemberError = '';
+                        this.quickMemberSuccess = '';
+                        this.quickMemberErrors = {};
+                    },
+
+                    openQuickMemberModal() {
+                        this.resetQuickMemberForm();
+                        this.quickMemberModalOpen = true;
+                    },
+
+                    closeQuickMemberModal() {
+                        if (this.quickMemberSaving) {
+                            return;
+                        }
+
+                        this.quickMemberModalOpen = false;
+                    },
+
+                    fieldError(field) {
+                        const errors = this.quickMemberErrors || {};
+                        const messages = errors[field] || [];
+
+                        return Array.isArray(messages) && messages.length > 0 ? messages[0] : '';
+                    },
+
+                    async submitQuickMember() {
+                        if (this.quickMemberSaving) {
+                            return;
+                        }
+
+                        this.quickMemberSaving = true;
+                        this.quickMemberError = '';
+                        this.quickMemberSuccess = '';
+                        this.quickMemberErrors = {};
+
+                        const payload = {
+                            nis_nip: this.quickMemberForm.nis_nip,
+                            name: this.quickMemberForm.name,
+                            member_type: this.quickMemberForm.member_type,
+                            gender: this.quickMemberForm.gender,
+                            student_class_id: this.quickMemberForm.member_type === 'siswa'
+                                ? this.quickMemberForm.student_class_id
+                                : '',
+                            phone: this.quickMemberForm.phone,
+                        };
+
+                        try {
+                            const response = await fetch(this.quickMemberStoreUrl, {
+                                method: 'POST',
+                                headers: {
+                                    'Accept': 'application/json',
+                                    'Content-Type': 'application/json',
+                                    'X-CSRF-TOKEN': this.csrfToken,
+                                },
+                                body: JSON.stringify(payload),
+                            });
+
+                            const data = await response.json().catch(() => ({}));
+
+                            if (!response.ok || !data.success) {
+                                this.quickMemberError = data.message || 'Anggota belum bisa disimpan.';
+                                this.quickMemberErrors = data.errors || {};
+                                return;
+                            }
+
+                            this.appendQuickMemberToSelect(data.member, data.class_name);
+                            this.quickMemberSuccess = data.message || 'Anggota berhasil didaftarkan.';
+
+                            window.setTimeout(() => {
+                                this.quickMemberModalOpen = false;
+                                this.resetQuickMemberForm();
+                            }, 650);
+                        } catch (error) {
+                            this.quickMemberError = 'Koneksi gagal. Silakan coba simpan lagi.';
+                        } finally {
+                            this.quickMemberSaving = false;
+                        }
+                    },
+
+                    appendQuickMemberToSelect(member, className) {
+                        if (!member || !member.id || !this.$refs.memberSelect) {
+                            return;
+                        }
+
+                        const select = this.$refs.memberSelect;
+                        const memberId = String(member.id);
+                        const identity = member.nis_nip || member.member_code || '-';
+                        const label = [
+                            member.name || '-',
+                            identity,
+                            className || member.student_class || '',
+                        ].filter((value) => String(value).trim() !== '').join(' - ');
+
+                        let option = Array.from(select.options)
+                            .find((item) => String(item.value) === memberId);
+
+                        if (!option) {
+                            option = new Option(label, memberId);
+                            select.add(option);
+                        }
+
+                        option.text = label;
+                        select.value = memberId;
+                        select.dispatchEvent(new Event('change', { bubbles: true }));
                     },
 
                     makeUid() {
