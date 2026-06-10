@@ -7,8 +7,9 @@ use App\Models\BookItem;
 use App\Models\Category;
 use App\Models\DdcClass;
 use Illuminate\Http\Request;
-use Illuminate\Validation\Rule;
 use Illuminate\Database\QueryException;
+use Illuminate\Support\Facades\Schema;
+use Illuminate\Validation\Rule;
 
 class BookController extends Controller
 {
@@ -28,15 +29,20 @@ class BookController extends Controller
     $categoryId = $request->input('category_id');
     $ddcClassId = $request->input('ddc_class_id');
 
+    $hasIsbnColumn = Schema::hasColumn('books', 'isbn');
+
     $books = \App\Models\Book::query()
-        ->when($keyword !== '', function ($query) use ($keyword) {
-            $query->where(function ($subQuery) use ($keyword) {
+        ->when($keyword !== '', function ($query) use ($keyword, $hasIsbnColumn) {
+            $query->where(function ($subQuery) use ($keyword, $hasIsbnColumn) {
                 $subQuery->where('title', 'like', "%{$keyword}%")
                     ->orWhere('author', 'like', "%{$keyword}%")
-                    ->orWhere('publisher', 'like', "%{$keyword}%")
-                    ->orWhere('isbn', 'like', "%{$keyword}%");
+                    ->orWhere('publisher', 'like', "%{$keyword}%");
 
-                if (\Illuminate\Support\Facades\Schema::hasColumn('books', 'classification_code')) {
+                if ($hasIsbnColumn) {
+                    $subQuery->orWhere('isbn', 'like', "%{$keyword}%");
+                }
+
+                if (Schema::hasColumn('books', 'classification_code')) {
                     $subQuery->orWhere('classification_code', 'like', "%{$keyword}%");
                 }
             });
@@ -75,6 +81,7 @@ class BookController extends Controller
     public function store(Request $request)
     {
         $request->merge([
+            'isbn' => $this->normalizeIsbn($request->input('isbn')),
             'price' => $request->filled('price')
                 ? str_replace(',', '.', $request->price)
                 : null,
@@ -82,6 +89,7 @@ class BookController extends Controller
 
         $validated = $request->validate([
             'title' => ['required', 'string', 'max:255'],
+            'isbn' => ['nullable', 'string', 'max:30', 'regex:/^[A-Za-z0-9-]+$/', Rule::unique('books', 'isbn')],
             'author' => ['required', 'string', 'max:150'],
             'author_code' => ['required', 'string', 'max:50'],
             'title_code' => ['required', 'string', 'max:50'],
@@ -96,6 +104,7 @@ class BookController extends Controller
 
         $book = Book::create([
             'title' => trim($validated['title']),
+            'isbn' => $validated['isbn'] ?? null,
             'author' => trim($validated['author']),
             'author_code' => trim($validated['author_code']),
             'title_code' => trim($validated['title_code']),
@@ -169,6 +178,7 @@ class BookController extends Controller
     public function update(Request $request, Book $book)
     {
         $request->merge([
+            'isbn' => $this->normalizeIsbn($request->input('isbn')),
             'price' => $request->filled('price')
                 ? str_replace(',', '.', $request->price)
                 : null,
@@ -176,6 +186,7 @@ class BookController extends Controller
 
         $validated = $request->validate([
             'title' => ['required', 'string', 'max:255'],
+            'isbn' => ['nullable', 'string', 'max:30', 'regex:/^[A-Za-z0-9-]+$/', Rule::unique('books', 'isbn')->ignore($book->id)],
             'author' => ['required', 'string', 'max:150'],
             'author_code' => ['required', 'string', 'max:50'],
             'title_code' => ['required', 'string', 'max:50'],
@@ -190,6 +201,7 @@ class BookController extends Controller
 
         $book->update([
             'title' => trim($validated['title']),
+            'isbn' => $validated['isbn'] ?? null,
             'author' => trim($validated['author']),
             'author_code' => trim($validated['author_code']),
             'title_code' => trim($validated['title_code']),
@@ -318,6 +330,8 @@ class BookController extends Controller
     {
         return [
             'title.required' => 'Judul buku wajib diisi.',
+            'isbn.regex' => 'ISBN hanya boleh berisi huruf, angka, dan tanda hubung.',
+            'isbn.unique' => 'ISBN tersebut sudah digunakan oleh buku lain.',
             'author.required' => 'Penulis wajib diisi.',
             'author_code.required' => 'Kode penulis wajib diisi.',
             'title_code.required' => 'Kode judul wajib diisi.',
@@ -337,6 +351,7 @@ class BookController extends Controller
     {
         return [
             'title' => 'Judul buku',
+            'isbn' => 'ISBN',
             'author' => 'Penulis',
             'author_code' => 'Kode penulis',
             'title_code' => 'Kode judul',
@@ -348,5 +363,12 @@ class BookController extends Controller
             'borrowing_status' => 'Status peminjaman',
             'description' => 'Deskripsi',
         ];
+    }
+
+    private function normalizeIsbn(?string $isbn): ?string
+    {
+        $isbn = strtoupper(preg_replace('/\s+/', '', trim((string) $isbn)));
+
+        return $isbn !== '' ? $isbn : null;
     }
 }

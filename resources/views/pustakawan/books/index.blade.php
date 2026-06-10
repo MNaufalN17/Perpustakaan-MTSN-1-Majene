@@ -225,6 +225,12 @@
                                                             <span class="inline-flex items-center rounded-full border border-gray-200 bg-slate-50 px-3 py-1 text-[11px] font-bold text-gray-600">
                                                                 {{ $book->publication_year ?? '-' }}
                                                             </span>
+
+                                                            @if(! empty($book->isbn))
+                                                                <span class="inline-flex max-w-[220px] items-center rounded-full border border-sky-100 bg-sky-50 px-3 py-1 font-mono text-[11px] font-bold text-sky-700">
+                                                                    ISBN {{ $book->isbn }}
+                                                                </span>
+                                                            @endif
                                                         </div>
                                                     </div>
                                                 </div>

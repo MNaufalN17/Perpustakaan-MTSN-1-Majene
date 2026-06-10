@@ -88,42 +88,6 @@
     >
         <div class="mx-auto max-w-7xl space-y-6 sm:px-6 lg:px-8">
 
-            @if(session('success_title') || session('success_message'))
-                <div class="rounded-3xl border border-emerald-200 bg-emerald-50 px-5 py-4 text-emerald-800 shadow-sm">
-                    <p class="font-extrabold">
-                        {{ session('success_title', 'Berhasil') }}
-                    </p>
-
-                    <p class="mt-1 text-sm">
-                        {{ session('success_message') }}
-                    </p>
-
-                    @if(session('success_detail'))
-                        <p class="mt-1 text-xs text-emerald-700">
-                            {{ session('success_detail') }}
-                        </p>
-                    @endif
-                </div>
-            @endif
-
-            @if(session('error_title') || session('error_message'))
-                <div class="rounded-3xl border border-red-200 bg-red-50 px-5 py-4 text-red-800 shadow-sm">
-                    <p class="font-extrabold">
-                        {{ session('error_title', 'Terjadi Kesalahan') }}
-                    </p>
-
-                    <p class="mt-1 text-sm">
-                        {{ session('error_message') }}
-                    </p>
-
-                    @if(session('error_detail'))
-                        <p class="mt-1 text-xs text-red-700">
-                            {{ session('error_detail') }}
-                        </p>
-                    @endif
-                </div>
-            @endif
-
             @if($errors->any())
                 <div class="rounded-3xl border border-red-200 bg-red-50 px-5 py-4 text-red-800 shadow-sm">
                     <p class="font-extrabold">

@@ -176,6 +176,92 @@
                             </a>
                         </div>
                     </form>
+
+                    <div class="mt-5 rounded-3xl border border-emerald-100 bg-emerald-50/70 p-4">
+                        <div class="flex flex-col gap-4 xl:flex-row xl:items-end xl:justify-between">
+                            <div>
+                                <p class="text-sm font-extrabold text-emerald-900">
+                                    Unduh Laporan Staff
+                                </p>
+                                <p class="mt-1 text-xs font-medium text-emerald-700">
+                                    CSV per eksemplar dengan data ISBN jika tersedia.
+                                </p>
+                            </div>
+
+                            <form method="GET" action="{{ route('loans.report.download') }}" class="grid flex-1 gap-3 sm:grid-cols-2 lg:grid-cols-5">
+                                <div>
+                                    <label for="report_start_date" class="block text-xs font-bold uppercase tracking-wider text-emerald-800">
+                                        Dari
+                                    </label>
+
+                                    <input
+                                        id="report_start_date"
+                                        type="date"
+                                        name="start_date"
+                                        value="{{ request('start_date', now()->startOfMonth()->format('Y-m-d')) }}"
+                                        class="mt-1 block w-full rounded-2xl border border-emerald-200 bg-white px-3 py-2.5 text-sm focus:border-emerald-500 focus:ring-2 focus:ring-emerald-100"
+                                    >
+                                </div>
+
+                                <div>
+                                    <label for="report_end_date" class="block text-xs font-bold uppercase tracking-wider text-emerald-800">
+                                        Sampai
+                                    </label>
+
+                                    <input
+                                        id="report_end_date"
+                                        type="date"
+                                        name="end_date"
+                                        value="{{ request('end_date', now()->format('Y-m-d')) }}"
+                                        class="mt-1 block w-full rounded-2xl border border-emerald-200 bg-white px-3 py-2.5 text-sm focus:border-emerald-500 focus:ring-2 focus:ring-emerald-100"
+                                    >
+                                </div>
+
+                                <div>
+                                    <label for="report_status" class="block text-xs font-bold uppercase tracking-wider text-emerald-800">
+                                        Status
+                                    </label>
+
+                                    <select
+                                        id="report_status"
+                                        name="status"
+                                        class="mt-1 block w-full rounded-2xl border border-emerald-200 bg-white px-3 py-2.5 text-sm focus:border-emerald-500 focus:ring-2 focus:ring-emerald-100"
+                                    >
+                                        <option value="">Semua</option>
+                                        @foreach(['aktif', 'terlambat', 'selesai', 'batal'] as $statusOption)
+                                            <option value="{{ $statusOption }}" @selected(request('status') === $statusOption)>
+                                                {{ ucfirst($statusOption) }}
+                                            </option>
+                                        @endforeach
+                                    </select>
+                                </div>
+
+                                <div>
+                                    <label for="report_loan_type" class="block text-xs font-bold uppercase tracking-wider text-emerald-800">
+                                        Jenis
+                                    </label>
+
+                                    <select
+                                        id="report_loan_type"
+                                        name="loan_type"
+                                        class="mt-1 block w-full rounded-2xl border border-emerald-200 bg-white px-3 py-2.5 text-sm focus:border-emerald-500 focus:ring-2 focus:ring-emerald-100"
+                                    >
+                                        <option value="">Semua</option>
+                                        <option value="regular" @selected(request('loan_type') === 'regular')>Biasa</option>
+                                        <option value="class_bulk" @selected(request('loan_type') === 'class_bulk')>Perwakilan Kelas</option>
+                                    </select>
+                                </div>
+
+                                <button
+                                    type="submit"
+                                    class="inline-flex items-center justify-center gap-2 self-end rounded-2xl bg-emerald-700 px-4 py-2.5 text-sm font-extrabold text-white transition hover:bg-emerald-800"
+                                >
+                                    <span class="material-symbols-outlined text-[18px]">download</span>
+                                    Unduh CSV
+                                </button>
+                            </form>
+                        </div>
+                    </div>
                 </div>
 
                 <div class="p-6">
@@ -369,7 +455,8 @@
                                                     @else
                                                         <button
                                                             type="button"
-                                                            onclick="alert('Transaksi ini tidak bisa dibatalkan karena statusnya bukan aktif atau terlambat.')"
+                                                            title="Transaksi ini tidak bisa dibatalkan karena statusnya bukan aktif atau terlambat."
+                                                            disabled
                                                             class="inline-flex h-10 items-center justify-center gap-1.5 rounded-xl border border-gray-200 bg-gray-50 px-3 text-xs font-bold text-gray-500"
                                                         >
                                                             <span class="material-symbols-outlined text-[16px]">block</span>

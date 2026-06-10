@@ -24,13 +24,6 @@
     <div class="py-10 bg-gradient-to-br from-slate-50 via-emerald-50/40 to-sky-50/40 min-h-screen">
         <div class="max-w-5xl mx-auto sm:px-6 lg:px-8">
 
-            @if(session('success'))
-                <div class="mb-4 rounded-2xl border border-emerald-200 bg-emerald-50 p-4 text-emerald-800 flex items-center gap-2 shadow-sm">
-                    <span class="material-symbols-outlined text-[20px]">check_circle</span>
-                    <span class="text-sm font-medium">{{ session('success') }}</span>
-                </div>
-            @endif
-
             @if ($errors->any())
                 <div class="mb-5 rounded-2xl border border-red-200 bg-red-50 p-4 text-sm text-red-700 shadow-sm">
                     <div class="font-bold mb-2">Terjadi kesalahan:</div>
@@ -120,6 +113,15 @@
                                 </p>
                                 <p class="mt-2 text-sm font-semibold leading-6 text-gray-900">
                                     {{ $book->author ?? '-' }}
+                                </p>
+                            </div>
+
+                            <div class="rounded-2xl border border-white/70 bg-white p-5 shadow-sm">
+                                <p class="text-xs font-bold uppercase tracking-[0.14em] text-emerald-700">
+                                    ISBN
+                                </p>
+                                <p class="mt-2 font-mono text-sm font-semibold leading-6 text-gray-900">
+                                    {{ $book->isbn ?? '-' }}
                                 </p>
                             </div>
 

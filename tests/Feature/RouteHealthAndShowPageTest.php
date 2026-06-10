@@ -48,6 +48,15 @@ class RouteHealthAndShowPageTest extends TestCase
             'loans.destroy',
             'loans.class_bulk.create',
             'loans.class_bulk.store',
+            'loans.report.download',
+
+            'visits.index',
+            'visits.create',
+            'visits.store',
+            'visits.show',
+            'visits.edit',
+            'visits.update',
+            'visits.destroy',
 
             'books.index',
             'books.create',

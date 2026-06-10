@@ -113,6 +113,11 @@
                             </div>
 
                             <div class="rounded-2xl bg-slate-50 p-4">
+                                <p class="text-xs font-bold uppercase tracking-[0.14em] text-gray-400">ISBN</p>
+                                <p class="mt-2 font-mono font-bold text-gray-900">{{ $book->isbn ?? '-' }}</p>
+                            </div>
+
+                            <div class="rounded-2xl bg-slate-50 p-4">
                                 <p class="text-xs font-bold uppercase tracking-[0.14em] text-gray-400">Penerbit</p>
                                 <p class="mt-2 font-bold text-gray-900">{{ $book->publisher ?? '-' }}</p>
                             </div>

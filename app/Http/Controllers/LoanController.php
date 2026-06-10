@@ -100,6 +100,120 @@ class LoanController extends Controller
         ));
     }
 
+    public function downloadReport(Request $request)
+    {
+        if (! auth()->check() || (int) auth()->user()->role_id !== 1) {
+            abort(403, 'Anda tidak memiliki akses.');
+        }
+
+        $validated = $request->validate([
+            'start_date' => ['nullable', 'date'],
+            'end_date' => ['nullable', 'date'],
+            'status' => ['nullable', 'in:aktif,terlambat,selesai,batal'],
+            'loan_type' => ['nullable', 'in:regular,class_bulk'],
+        ], [
+            'start_date.date' => 'Tanggal awal laporan tidak valid.',
+            'end_date.date' => 'Tanggal akhir laporan tidak valid.',
+            'status.in' => 'Status laporan tidak valid.',
+            'loan_type.in' => 'Jenis peminjaman laporan tidak valid.',
+        ]);
+
+        $this->syncOverdueLoans();
+
+        $startDate = $validated['start_date'] ?? now()->startOfMonth()->format('Y-m-d');
+        $endDate = $validated['end_date'] ?? now()->format('Y-m-d');
+
+        if (Carbon::parse($startDate)->startOfDay()->gt(Carbon::parse($endDate)->startOfDay())) {
+            throw ValidationException::withMessages([
+                'start_date' => 'Tanggal awal laporan tidak boleh setelah tanggal akhir.',
+            ]);
+        }
+
+        $loans = Loan::with([
+                'member.studentClass',
+                'studentClass',
+                'handler',
+                'loanItems.bookItem.book',
+            ])
+            ->whereDate('loan_date', '>=', $startDate)
+            ->whereDate('loan_date', '<=', $endDate)
+            ->when(! empty($validated['status']), function ($query) use ($validated) {
+                $query->where('status', $validated['status']);
+            })
+            ->when(! empty($validated['loan_type']), function ($query) use ($validated) {
+                $query->where('loan_type', $validated['loan_type']);
+            })
+            ->oldest('loan_date')
+            ->orderBy('loan_code')
+            ->get();
+
+        $fileName = 'laporan-peminjaman-staff-' . $startDate . '-sampai-' . $endDate . '.csv';
+
+        return response()->streamDownload(function () use ($loans) {
+            $output = fopen('php://output', 'w');
+
+            fwrite($output, "\xEF\xBB\xBF");
+
+            fputcsv($output, [
+                'No',
+                'Kode Transaksi',
+                'Jenis Peminjaman',
+                'Status Transaksi',
+                'Tanggal Pinjam',
+                'Batas Kembali',
+                'Tanggal Kembali',
+                'Nama Anggota',
+                'NIS/NIP',
+                'Kelas',
+                'Judul Buku',
+                'ISBN',
+                'Kode Eksemplar',
+                'Status Eksemplar',
+                'Denda',
+                'Petugas',
+                'Catatan',
+            ], ';');
+
+            $rowNumber = 1;
+
+            foreach ($loans as $loan) {
+                $loanItems = $loan->loanItems->isNotEmpty()
+                    ? $loan->loanItems
+                    : collect([null]);
+
+                foreach ($loanItems as $loanItem) {
+                    $bookItem = $loanItem?->bookItem;
+                    $book = $bookItem?->book;
+
+                    fputcsv($output, [
+                        $rowNumber++,
+                        $loan->loan_code ?? ('TRX-' . $loan->id),
+                        $loan->loan_type_label,
+                        ucfirst((string) ($loan->status ?? '-')),
+                        $this->csvDate($loan->loan_date),
+                        $this->csvDate($loan->due_date),
+                        $this->csvDate($loan->return_date),
+                        $loan->member?->name ?? '-',
+                        $loan->member?->nis_nip ?? $loan->member?->member_code ?? '-',
+                        $loan->studentClass?->class_name ?? $loan->member?->studentClass?->class_name ?? 'Guru/Staff',
+                        $book?->title ?? '-',
+                        $book?->isbn ?? '-',
+                        $bookItem?->item_code ?? '-',
+                        $loanItem?->status ? ucwords((string) $loanItem->status) : '-',
+                        (int) ($loanItem?->fine_amount ?? 0),
+                        $loan->handler?->name ?? '-',
+                        $loan->notes ?? '-',
+                    ], ';');
+                }
+            }
+
+            fclose($output);
+        }, $fileName, [
+            'Content-Type' => 'text/csv; charset=UTF-8',
+            'Cache-Control' => 'no-store, no-cache',
+        ]);
+    }
+
     public function store(Request $request)
     {
         if (! auth()->check() || (int) auth()->user()->role_id !== 1) {
@@ -869,6 +983,11 @@ class LoanController extends Controller
         } while (Loan::where('loan_code', $loanCode)->exists());
 
         return $loanCode;
+    }
+
+    private function csvDate($date): string
+    {
+        return $date ? Carbon::parse($date)->format('Y-m-d') : '-';
     }
 
     private function settingInt(string $key, int $default, int $min, int $max): int

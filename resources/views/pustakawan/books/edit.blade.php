@@ -183,6 +183,30 @@
                                 @enderror
                             </div>
 
+                            <div>
+                                <label for="isbn" class="block text-xs font-bold uppercase tracking-[0.12em] text-gray-500">
+                                    ISBN
+                                </label>
+
+                                <input
+                                    id="isbn"
+                                    name="isbn"
+                                    type="text"
+                                    value="{{ old('isbn', $book->isbn) }}"
+                                    inputmode="numeric"
+                                    placeholder="Contoh: 978-602-1234-56-7"
+                                    class="mt-2 block w-full rounded-2xl border border-emerald-200 bg-white px-4 py-3 text-sm text-gray-900 shadow-sm focus:border-emerald-500 focus:ring-2 focus:ring-emerald-200"
+                                >
+
+                                <p class="mt-2 text-xs text-gray-500">
+                                    Opsional. Gunakan angka dan tanda hubung jika tersedia.
+                                </p>
+
+                                @error('isbn')
+                                    <p class="mt-2 text-xs font-medium text-red-600">{{ $message }}</p>
+                                @enderror
+                            </div>
+
                             <div class="grid gap-5 md:grid-cols-2">
                                 <div>
                                     <label for="author" class="block text-xs font-bold uppercase tracking-[0.12em] text-gray-500">

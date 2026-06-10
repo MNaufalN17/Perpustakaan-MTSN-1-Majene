@@ -8,6 +8,7 @@ use App\Http\Controllers\CategoryController;
 use App\Http\Controllers\DdcClassController;
 use App\Http\Controllers\KepalaSekolahDashboardController;
 use App\Http\Controllers\KepalaSekolahReportController;
+use App\Http\Controllers\LibraryVisitController;
 use App\Http\Controllers\LoanController;
 use App\Http\Controllers\MemberController;
 use App\Http\Controllers\ProfileController;
@@ -186,6 +187,9 @@ Route::middleware(['auth', 'verified'])->group(function () {
         Route::post('/loans/class-bulk', [LoanController::class, 'classBulkStore'])
             ->name('loans.class_bulk.store');
 
+        Route::get('/loans/report/download', [LoanController::class, 'downloadReport'])
+            ->name('loans.report.download');
+
         Route::resource('loans', LoanController::class);
 
         /*
@@ -198,6 +202,9 @@ Route::middleware(['auth', 'verified'])->group(function () {
             ->name('members.quick_store');
 
         Route::resource('members', MemberController::class)
+            ->except(['index', 'show']);
+
+        Route::resource('visits', LibraryVisitController::class)
             ->except(['index', 'show']);
 
         /*
@@ -239,6 +246,9 @@ Route::middleware(['auth', 'verified'])->group(function () {
             ->only(['index', 'show']);
 
         Route::resource('members', MemberController::class)
+            ->only(['index', 'show']);
+
+        Route::resource('visits', LibraryVisitController::class)
             ->only(['index', 'show']);
     });
 
