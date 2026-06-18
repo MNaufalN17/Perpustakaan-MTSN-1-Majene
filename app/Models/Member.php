@@ -30,4 +30,9 @@ class Member extends Model
     {
         return $this->hasMany(Loan::class);
     }
+
+    public function visits()
+    {
+        return $this->hasMany(LibraryVisit::class);
+    }
 }

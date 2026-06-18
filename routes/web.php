@@ -106,6 +106,27 @@ Route::middleware(['auth', 'verified'])->group(function () {
                 ->limit(5)
                 ->get();
 
+            $activeStudentLeaderboard = Member::with('studentClass')
+                ->where('member_type', 'siswa')
+                ->where('status', 'aktif')
+                ->withCount([
+                    'loans as loans_count',
+                    'visits as visits_count',
+                ])
+                ->orderByRaw('(loans_count + visits_count) DESC')
+                ->orderByDesc('loans_count')
+                ->orderByDesc('visits_count')
+                ->orderBy('name')
+                ->limit(10)
+                ->get()
+                ->map(function ($member) {
+                    $member->activity_score = (int) $member->loans_count + (int) $member->visits_count;
+
+                    return $member;
+                })
+                ->filter(fn ($member) => $member->activity_score > 0)
+                ->values();
+
             return view('pustakawan.dashboard', compact(
                 'totalBooks',
                 'activeMembers',
@@ -114,7 +135,8 @@ Route::middleware(['auth', 'verified'])->group(function () {
                 'estimatedFines',
                 'overdueLoansCount',
                 'popularBooks',
-                'recentLoans'
+                'recentLoans',
+                'activeStudentLeaderboard'
             ));
         }
 
