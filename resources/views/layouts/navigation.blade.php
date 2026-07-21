@@ -9,6 +9,15 @@
         $dashboardRoute = $isAdmin
             ? route('admin.dashboard')
             : ($isKepala ? route('kepala_sekolah.dashboard') : route('dashboard'));
+
+        $panduanFile = '#';
+        if ($isAdmin) {
+            $panduanFile = asset('panduan/Panduan_Admin_Perpustakaan_MTSN1_Majene.pdf');
+        } elseif ($isPustakawan) {
+            $panduanFile = asset('panduan/Panduan_Staff_Perpustakaan_MTSN1_Majene.pdf');
+        } elseif ($isKepala) {
+            $panduanFile = asset('panduan/Panduan_Kepala_Perpustakaan_MTSN1_Majene.pdf');
+        }
     @endphp
 
     <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
@@ -188,8 +197,20 @@
             </div>
 
             <div class="hidden sm:flex sm:items-center sm:ms-6">
+                <!-- Tombol Panduan -->
+                @if($panduanFile !== '#')
+                <a href="{{ $panduanFile }}" target="_blank"
+                   class="mr-4 inline-flex items-center px-3 py-1.5 border border-gray-200 text-sm font-medium rounded-md text-gray-600 bg-white hover:text-gray-900 hover:bg-gray-50 hover:border-gray-300 transition duration-150 ease-in-out focus:outline-none shadow-sm"
+                   title="Lihat Buku Panduan">
+                    <svg class="w-4 h-4 mr-1.5 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253"></path>
+                    </svg>
+                    Panduan
+                </a>
+                @endif
+
                 <!-- Tombol Switch Tema -->
-                <button 
+                <div class="mr-4 flex items-center justify-center"
                     x-data="{ 
                         theme: localStorage.getItem('app-theme') || 'emerald',
                         toggleTheme() {
@@ -202,14 +223,21 @@
                             }
                         }
                     }"
-                    @click="toggleTheme()"
-                    class="mr-3 p-2 text-gray-500 transition duration-150 ease-in-out bg-white border border-transparent rounded-md hover:text-gray-700 hover:bg-gray-50 focus:outline-none"
-                    title="Ganti Tema Warna"
                 >
-                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 21a4 4 0 01-4-4V5a2 2 0 012-2h4a2 2 0 012 2v12a4 4 0 01-4 4zm0 0h12a2 2 0 002-2v-4a2 2 0 00-2-2h-2.343M11 7.343l1.657-1.657a2 2 0 012.828 0l2.829 2.829a2 2 0 010 2.828l-8.486 8.485M7 17h.01"></path>
-                    </svg>
-                </button>
+                    <button 
+                        @click="toggleTheme()"
+                        :class="theme === 'pink' ? 'bg-pink-500' : 'bg-emerald-500'"
+                        class="relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none"
+                        role="switch" 
+                        title="Ganti Tema Warna"
+                    >
+                        <span class="sr-only">Toggle Theme</span>
+                        <span 
+                            :class="theme === 'pink' ? 'translate-x-5' : 'translate-x-0'"
+                            class="pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out"
+                        ></span>
+                    </button>
+                </div>
 
                 <x-dropdown align="right" width="48">
                     <x-slot name="trigger">
@@ -369,6 +397,12 @@
             </div>
 
             <div class="mt-3 space-y-1">
+                @if($panduanFile !== '#')
+                    <x-responsive-nav-link :href="$panduanFile" target="_blank">
+                        {{ __('Buku Panduan') }}
+                    </x-responsive-nav-link>
+                @endif
+
                 <x-responsive-nav-link :href="route('profile.edit')">
                     {{ __('Profil Saya') }}
                 </x-responsive-nav-link>
