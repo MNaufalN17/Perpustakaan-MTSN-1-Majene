@@ -15,6 +15,14 @@
 
     @vite(['resources/css/app.css', 'resources/js/app.js'])
 
+    {{-- Theme: load sebelum render untuk mencegah flash warna --}}
+    <script>
+        (function() {
+            var t = localStorage.getItem('app-theme');
+            if (t === 'pink') document.documentElement.setAttribute('data-theme', 'pink');
+        })();
+    </script>
+
     <style>
         /* Memaksa font Inter berlaku global */
         body {
